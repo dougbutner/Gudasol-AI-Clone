@@ -1,0 +1,6 @@
+tools/models/
+tools/__pycache__/
+Shorts/_style_preview.png
+Shorts/_frames/
+Long Videos/*.wav
+.DS_Store
