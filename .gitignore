@@ -1,6 +1,7 @@
 tools/models/
 tools/__pycache__/
-Shorts/_style_preview.png
-Shorts/_frames/
-Long Videos/*.wav
+tools/detect_faces
+
+Shorts/
+Long Videos/
 .DS_Store
