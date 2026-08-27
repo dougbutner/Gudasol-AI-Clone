@@ -277,37 +277,8 @@ def load_connections() -> dict[str, Any]:
         if isinstance(loaded, dict):
             local = loaded
     env_map = {
-        "youtube": {
-            "integration_id": "NANGO_YOUTUBE_INTEGRATION_ID",
-            "connection_id": "NANGO_YOUTUBE_CONNECTION_ID",
-        },
-        "tiktok": {
-            "integration_id": "NANGO_TIKTOK_INTEGRATION_ID",
-            "connection_id": "NANGO_TIKTOK_CONNECTION_ID",
-        },
-        "instagram": {
-            "integration_id": "NANGO_INSTAGRAM_INTEGRATION_ID",
-            "connection_id": "NANGO_INSTAGRAM_CONNECTION_ID",
-            "ig_user_id": "NANGO_INSTAGRAM_IG_USER_ID",
-        },
-        "linkedin": {
-            "integration_id": "NANGO_LINKEDIN_INTEGRATION_ID",
-            "connection_id": "NANGO_LINKEDIN_CONNECTION_ID",
-        },
-        "facebook": {
-            "integration_id": "NANGO_FACEBOOK_INTEGRATION_ID",
-            "connection_id": "NANGO_FACEBOOK_CONNECTION_ID",
-            "page_id": "NANGO_FACEBOOK_PAGE_ID",
-        },
-        "x": {
-            "integration_id": "NANGO_X_INTEGRATION_ID",
-            "connection_id": "NANGO_X_CONNECTION_ID",
-        },
-        "pinterest": {
-            "integration_id": "NANGO_PINTEREST_INTEGRATION_ID",
-            "connection_id": "NANGO_PINTEREST_CONNECTION_ID",
-            "board_id": "NANGO_PINTEREST_BOARD_ID",
-        },
+        "facebook": {"page_id": "FACEBOOK_PAGE_ID"},
+        "linkedin": {"owner_id": "LINKEDIN_OWNER_ID"},
     }
     for name, fields in env_map.items():
         cfg = dict(local.get(name) or {}) if isinstance(local.get(name), dict) else {}
