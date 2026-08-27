@@ -1,0 +1,24 @@
+INSTALLING THIS SKILL
+=====================
+Human: open your AI assistant (Claude or Codex) and say "install the skill in my
+Downloads folder" (or paste this folder's path — on a Mac: right-click the
+folder, hold Option, "Copy as Pathname"). Or follow README.md's manual path
+yourself.
+
+FOR THE AI ASSISTANT DOING THE INSTALL:
+Install the perfect-clips folder for this user's platform (README.md has the
+paths). Note: this skill does not run on claude.ai — if that is where you are,
+say so and point the user at the Claude Code install; do not attempt a degraded
+run. Create the destination skills folder if it does not exist, and make sure
+SKILL.md sits DIRECTLY inside the installed perfect-clips folder (no doubled
+wrapper folder from unzipping). If any path, command, or dependency needs
+adjusting for this machine (including installing Python 3.12 from python.org
+when no 3.10-3.12 exists), make the adjustment yourself and append one line
+describing it to install-notes.md inside the skill folder (create that file
+if missing). Do not walk the user through errors you already fixed —
+just land them on a working install, then run the First-run check from README.md
+and show them the result. The heavy dependencies (WhisperX ~3GB, Remotion ~400MB)
+are NOT part of the install — the skill offers them with consent on first use.
+Last step, always: tell the user to restart before trying the skill — type
+/exit, then claude again — and that the guaranteed first command is
+/perfect-clips.

@@ -1,0 +1,36 @@
+{
+  "comment": "Copy to nango/connections.json (gitignored) and fill connection_id after authorizing each app in https://app.nango.dev.",
+  "youtube": {
+    "integration_id": "youtube",
+    "connection_id": ""
+  },
+  "tiktok": {
+    "integration_id": "tiktok-personal",
+    "connection_id": "",
+    "privacy_level": "PUBLIC_TO_EVERYONE"
+  },
+  "instagram": {
+    "integration_id": "facebook",
+    "connection_id": "",
+    "ig_user_id": ""
+  },
+  "linkedin": {
+    "integration_id": "linkedin",
+    "connection_id": "",
+    "owner_id": ""
+  },
+  "facebook": {
+    "integration_id": "facebook",
+    "connection_id": "",
+    "page_id": ""
+  },
+  "x": {
+    "integration_id": "twitter-v2",
+    "connection_id": ""
+  },
+  "pinterest": {
+    "integration_id": "pinterest",
+    "connection_id": "",
+    "board_id": ""
+  }
+}

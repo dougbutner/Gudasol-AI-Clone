@@ -1,7 +1,10 @@
 tools/models/
 tools/__pycache__/
 tools/detect_faces
+nango/__pycache__/
 
+.env
+nango/
 Shorts/
 Long Videos/
 .DS_Store
