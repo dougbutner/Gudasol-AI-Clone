@@ -143,6 +143,33 @@ def http_request(
         raise RuntimeError(f"{method} {url} -> {exc.code}: {parsed}") from exc
 
 
+def tiktok_access_token() -> str:
+    load_env(ENV_PATH)
+    token = os.environ.get("TIKTOK_ACCESS_TOKEN", "").strip()
+    refresh = os.environ.get("TIKTOK_REFRESH_TOKEN", "").strip()
+    client_key = os.environ.get("TIKTOK_CLIENT_KEY", "").strip()
+    client_secret = os.environ.get("TIKTOK_CLIENT_SECRET", "").strip()
+    if refresh and client_key and client_secret:
+        _, _, body = http_request(
+            "POST",
+            "https://open.tiktokapis.com/v2/oauth/token/",
+            data=urllib.parse.urlencode(
+                {
+                    "client_key": client_key,
+                    "client_secret": client_secret,
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh,
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        if isinstance(body, dict):
+            nested = body.get("data") if isinstance(body.get("data"), dict) else body
+            if nested.get("access_token"):
+                return str(nested["access_token"])
+    return token
+
+
 def youtube_access_token() -> str:
     load_env(ENV_PATH)
     token = os.environ.get("YOUTUBE_ACCESS_TOKEN", "").strip()
@@ -465,33 +492,40 @@ def publish_youtube_direct(
     return result
 
 
-def publish_tiktok(client: Nango, cfg: dict[str, Any], video: Path, title: str) -> Any:
+def tiktok_init_body(video: Path, title: str, privacy: str, inbox: bool) -> dict[str, Any]:
     size = video.stat().st_size
-    init = client.trigger(
-        cfg["integration_id"],
-        cfg["connection_id"],
-        "init-video-upload",
-        {
-            "post_info": {
-                "title": title,
-                "privacy_level": cfg.get("privacy_level") or "PUBLIC_TO_EVERYONE",
-                "is_aigc": True,
-            },
-            "source_info": {
-                "source": "FILE_UPLOAD",
-                "video_size": size,
-                "chunk_size": size,
-                "total_chunk_count": 1,
-            },
-            "post_mode": "DIRECT_POST",
-            "media_type": "VIDEO",
+    source = {
+        "source": "FILE_UPLOAD",
+        "video_size": size,
+        "chunk_size": size,
+        "total_chunk_count": 1,
+    }
+    if inbox:
+        return {"source_info": source}
+    return {
+        "post_info": {
+            "title": title[:2200],
+            "privacy_level": privacy,
+            "disable_duet": False,
+            "disable_comment": False,
+            "disable_stitch": False,
+            "video_cover_timestamp_ms": 1000,
         },
-    )
-    upload_url = None
-    if isinstance(init, dict):
-        upload_url = init.get("upload_url") or (init.get("data") or {}).get("upload_url")
-    if not upload_url:
-        die(f"TikTok init-video-upload did not return upload_url: {init}")
+        "source_info": source,
+        "post_mode": "DIRECT_POST",
+        "media_type": "VIDEO",
+    }
+
+
+def tiktok_upload_url_from(init: Any) -> str | None:
+    if not isinstance(init, dict):
+        return None
+    data = init.get("data") if isinstance(init.get("data"), dict) else init
+    return data.get("upload_url") or init.get("upload_url")
+
+
+def tiktok_put_video(upload_url: str, video: Path) -> str:
+    size = video.stat().st_size
     req = urllib.request.Request(
         upload_url,
         data=video.read_bytes(),
@@ -502,9 +536,65 @@ def publish_tiktok(client: Nango, cfg: dict[str, Any], video: Path, title: str) 
             "Content-Range": f"bytes 0-{size - 1}/{size}",
         },
     )
-    with urllib.request.urlopen(req, timeout=600) as resp:
-        raw = resp.read().decode("utf-8", errors="replace")
-    return {"init": init, "upload_status": raw or "ok"}
+    with https_opener().open(req, timeout=600) as resp:
+        return resp.read().decode("utf-8", errors="replace") or "ok"
+
+
+def publish_tiktok_direct(video: Path, title: str, privacy: str) -> Any:
+    token = tiktok_access_token()
+    if not token:
+        die("Missing TIKTOK_ACCESS_TOKEN in .env")
+    attempts = (
+        ("/v2/post/publish/video/init/", False),
+        ("/v2/post/publish/inbox/video/init/", True),
+    )
+    last: Any = None
+    for path, inbox in attempts:
+        try:
+            _, _, init = http_request(
+                "POST",
+                f"https://open.tiktokapis.com{path}",
+                json_body=tiktok_init_body(video, title, privacy, inbox),
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        except RuntimeError as exc:
+            last = str(exc)
+            continue
+        upload_url = tiktok_upload_url_from(init)
+        if not upload_url:
+            last = init
+            continue
+        raw = tiktok_put_video(upload_url, video)
+        return {"mode": "inbox" if inbox else "direct", "init": init, "upload_status": raw}
+    die(f"TikTok init did not return upload_url: {last}")
+
+
+def publish_tiktok(client: Nango, cfg: dict[str, Any], video: Path, title: str) -> Any:
+    privacy = cfg.get("privacy_level") or "SELF_ONLY"
+    attempts = (
+        ("/v2/post/publish/video/init/", False),
+        ("/v2/post/publish/inbox/video/init/", True),
+    )
+    last: Any = None
+    for path, inbox in attempts:
+        try:
+            _, _, init = client.proxy(
+                "POST",
+                cfg["integration_id"],
+                cfg["connection_id"],
+                path,
+                json_body=tiktok_init_body(video, title, privacy, inbox),
+            )
+        except RuntimeError as exc:
+            last = str(exc)
+            continue
+        upload_url = tiktok_upload_url_from(init)
+        if not upload_url:
+            last = init
+            continue
+        raw = tiktok_put_video(upload_url, video)
+        return {"mode": "inbox" if inbox else "direct", "init": init, "upload_status": raw}
+    die(f"TikTok init did not return upload_url: {last}")
 
 
 def publish_linkedin(client: Nango, cfg: dict[str, Any], video: Path, title: str, text: str) -> Any:
@@ -703,7 +793,14 @@ def cmd_share(args: argparse.Namespace) -> None:
         print(f"description:\n{description}")
         return
     load_env(ENV_PATH)
-    needs_nango = any(n != "youtube" or not os.environ.get("YOUTUBE_ACCESS_TOKEN", "").strip() for n in names)
+    tiktok_direct = bool(os.environ.get("TIKTOK_ACCESS_TOKEN", "").strip() or os.environ.get("TIKTOK_REFRESH_TOKEN", "").strip())
+    youtube_direct = bool(os.environ.get("YOUTUBE_ACCESS_TOKEN", "").strip() or os.environ.get("YOUTUBE_REFRESH_TOKEN", "").strip())
+    needs_nango = any(
+        (n == "youtube" and not youtube_direct)
+        or (n == "tiktok" and not tiktok_direct)
+        or n not in ("youtube", "tiktok")
+        for n in names
+    )
     client = nango_client() if needs_nango else None
     local = load_connections()
     results: dict[str, Any] = {}
@@ -714,13 +811,18 @@ def cmd_share(args: argparse.Namespace) -> None:
             continue
         print(f"publishing {name}…")
         try:
-            if name == "youtube" and os.environ.get("YOUTUBE_ACCESS_TOKEN", "").strip():
+            if name == "youtube" and youtube_direct:
                 print("using YOUTUBE_ACCESS_TOKEN from .env")
                 results[name] = publish_youtube_direct(work, title, description, tags, args.privacy)
             elif name == "youtube":
                 cfg = require_cfg(local, name, client)
                 results[name] = publish_youtube(client, cfg, work, title, description, tags, args.privacy)
+            elif name == "tiktok" and tiktok_direct:
+                print("using TIKTOK_ACCESS_TOKEN from .env")
+                privacy = (local.get("tiktok") or {}).get("privacy_level") if isinstance(local.get("tiktok"), dict) else None
+                results[name] = publish_tiktok_direct(work, title, privacy or "SELF_ONLY")
             elif name == "tiktok":
+                cfg = require_cfg(local, name, client)
                 results[name] = publish_tiktok(client, cfg, work, title)
             elif name == "linkedin":
                 results[name] = publish_linkedin(client, cfg, work, title, description)
