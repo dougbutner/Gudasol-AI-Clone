@@ -2,14 +2,17 @@
 name: telegram-gifs
 description: >-
   Make silent square Telegram GIFs (muted H.264 MP4, 480x480, 3–6s) with
-  animated meme text, face-tracked Gudasol crops, and a corner site link.
-  Use when the user asks for Telegram GIFs, Cult of Code clips, square silent
-  MP4 loops, crypto reaction clips, GM clips, or saves into Telegram Gifs.
+  Open Sans Thin meme text, a small pure-black drop shadow, face-tracked
+  Gudasol crops, and a corner site link. Use when the user asks for Telegram
+  GIFs, Cult of Code clips, square silent MP4 loops, crypto reaction clips,
+  GM clips, or saves into Telegram Gifs.
 ---
 
 # Telegram GIFs
 
 Silent **square MP4s** (Telegram GIFs), not `.gif` and not audio.
+
+This is a **repo skill** (`.cursor/skills/telegram-gifs/`). Font file: `fonts/OpenSans-Thin.ttf`.
 
 ## Spec
 
@@ -19,10 +22,12 @@ Silent **square MP4s** (Telegram GIFs), not `.gif` and not audio.
 | Length | **3–6 seconds** |
 | Video | H.264, `yuv420p`, `+faststart`, **no audio** |
 | Face | Vision face only (`tools/detect_faces`), conf ≥ 0.55. Never body-only crops. |
-
-**Never overwrite or delete existing GIFs.** New files always get a unique name.
+| Caption | **Open Sans Thin**, white, **2px pure-black drop shadow** |
+| Chrome | Logo + Open Sans Thin URL only in the **last 1 second** |
 
 Default source: **`Long Videos/Cracking the Galactic Code of Lifelight with Gudasol - 12min.mp4`**.
+
+When replacing a generation, **move live GIFs into `Telegram Gifs/old/`** (keep category subfolders). Never delete `old/`. New files always get a unique timestamp name.
 
 ```bash
 python ".cursor/skills/telegram-gifs/scripts/make_telegram_gif.py" --help
@@ -36,12 +41,17 @@ python ".cursor/skills/telegram-gifs/scripts/make_telegram_gif.py" --help
 | `Music/` | VIBE, BANGER, DROP, 432HZ, … |
 | `Spiritual/` | NAMASTE, OM, AWAKEN, cult, BASED, … |
 | `Gudasol/` | GM, GN, Guda …, Yves, code lines |
+| `old/` | Previous generations, archived as-is |
 
-Uncategorized clips stay in `Telegram Gifs/` root. Sort existing:
+Uncategorized clips stay in `Telegram Gifs/` root.
 
 ```bash
 python ".cursor/skills/telegram-gifs/scripts/make_telegram_gif.py" --sort
+python ".cursor/skills/telegram-gifs/scripts/make_telegram_gif.py" --archive-old
+python ".cursor/skills/telegram-gifs/scripts/make_telegram_gif.py" --preset all
 ```
+
+`--preset all` archives live GIFs into `old/`, then regenerates **one clip per unique caption** found there.
 
 ## Names
 
@@ -51,12 +61,14 @@ Example: `gm-douglas.life-gudasol-20260828-112800.mp4`
 ## Presets
 
 ```bash
+python ".cursor/skills/telegram-gifs/scripts/make_telegram_gif.py" --preset look-test
 python ".cursor/skills/telegram-gifs/scripts/make_telegram_gif.py" --preset gm
 python ".cursor/skills/telegram-gifs/scripts/make_telegram_gif.py" --preset more-20
 python ".cursor/skills/telegram-gifs/scripts/make_telegram_gif.py" --preset cult-10
+python ".cursor/skills/telegram-gifs/scripts/make_telegram_gif.py" --preset all
 ```
 
-`--preset` also runs `--sort` first.
+`--preset` (except `look-test` and `all`) also runs `--sort` first. `look-test` is still caption, no extra motion.
 
 ## URL rules
 
@@ -68,8 +80,19 @@ python ".cursor/skills/telegram-gifs/scripts/make_telegram_gif.py" --preset cult
 | Gudasol / greetings / code | `douglas.life` |
 | Earth / nature (only if none of the above) | `tetra.earth` |
 
-## Text styles
+## Text attention (random)
 
-Cycle 0–9: impact_bounce, typewriter, rainbow_stagger, drop_in, neon_pulse, karaoke_words, shake, glitch_chroma, wave, stamp.
+About one third of clips stay **still**. The rest pick one motion. Cycle extras (bulge, slice-glitch, end fade/zoom/slide) stay rare (≤10%).
 
-**Rare extras (each ≤10% of clips, independent):** bulge, slice-glitch, end transition (fade / zoom-out / slide).
+| Kind | What it does |
+|------|----------------|
+| **still** | Frozen Thin + black shadow |
+| **pulse** | Whole caption breathes in scale |
+| **shake** | 1–2px jitter |
+| **typewriter** | Letters appear left → right |
+| **drop_in** | Letters fall into place |
+| **wave** | Letters bob on a sine |
+| **stagger** | Letters fade in left → right |
+| **flash** | Brief opacity blink |
+
+Other ideas (not wired yet): tracking pulse, karaoke word highlight, 3° wobble, underline grow, chromatic split, stamp bounce. Ask to add any of these.

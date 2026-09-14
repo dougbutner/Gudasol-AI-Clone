@@ -7,5 +7,14 @@ nango/__pycache__/
 nango/
 Shorts/
 Long Videos/
+Music Videos/source videos/**
+!Music Videos/source videos/.gitkeep
+Music Videos/source audio/**
+!Music Videos/source audio/.gitkeep
+Music Videos/9by19/**
+!Music Videos/9by19/.gitkeep
+Music Videos/16by9/**
+!Music Videos/16by9/.gitkeep
+Music Videos/.work/
 .DS_Store
 .work

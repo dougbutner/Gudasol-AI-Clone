@@ -34,11 +34,12 @@ FPS = 30
 SCAN_FPS = 1.0
 MIN_FACE_FRAC = 0.003
 
+SKILL_DIR = Path(__file__).resolve().parent.parent
+CAPTION_FONT = SKILL_DIR / "fonts" / "OpenSans-Thin.ttf"
 FONTS = [
-    Path("/System/Library/Fonts/Supplemental/Impact.ttf"),
-    Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
+    CAPTION_FONT,
 ]
-URL_FONT = Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf")
+URL_FONT = CAPTION_FONT
 
 URLS = (
     "douglas.life",
@@ -66,10 +67,13 @@ CRYPTO_KEYS = {
 }
 MUSIC_KEYS = {
     "vibe", "banger", "drop", "432", "hz", "beat", "mix", "track", "song",
-    "flow", "cxc",
+    "flow", "cxc", "frequency",
 }
 SPIRIT_KEYS = {
     "namaste", "om", "awaken", "bless", "based", "cult", "spirit", "light",
+    "gratitude", "love", "heart", "devotion", "surrender", "receive", "holy",
+    "praise", "amethyst", "breathe", "presence", "galactic", "thank", "offer",
+    "rise", "let",
 }
 GREET_KEYS = {"gm", "gn", "guda", "yves", "approves", "dissapproves", "disapproves"}
 CODE_KEYS = {"code", "push", "telegram", "yves"}
@@ -96,17 +100,46 @@ CULT_10 = [
 
 GM_MORE = ["GM"] * 8
 
-STYLE_NAMES = [
-    "impact_bounce",
-    "typewriter",
-    "rainbow_stagger",
-    "drop_in",
-    "neon_pulse",
-    "karaoke_words",
+# Random caption motion. "still" is the default look; others draw the eye.
+ATTENTION_KINDS = (
+    "still",
+    "pulse",
     "shake",
-    "glitch_chroma",
+    "typewriter",
+    "drop_in",
     "wave",
+    "stagger",
+    "flash",
+    "tracking",
+    "karaoke",
+    "wobble",
+    "underline",
+    "chroma",
     "stamp",
+)
+
+AMETHYST = ROOT / "Long Videos" / "Gudasol - The Amethyst Album - School for Galactic Diplomats.mp4"
+AMETHYST_20 = [
+    "GRATITUDE",
+    "GIVE IT UP TO LOVE",
+    "OPEN HEART",
+    "SURRENDER",
+    "BLESS UP",
+    "RECEIVE",
+    "DEVOTION",
+    "ONE LOVE",
+    "THANK YOU",
+    "OFFER IT UP",
+    "PRESENCE",
+    "BREATHE",
+    "HOLY",
+    "RISE",
+    "AMETHYST",
+    "LIGHT BODY",
+    "PRAISE",
+    "FREQUENCY",
+    "LET GO",
+    "GALACTIC LOVE",
 ]
 
 
@@ -183,7 +216,7 @@ def pick_font() -> Path:
     for p in FONTS:
         if p.is_file():
             return p
-    sys.exit("No usable TTF found (Impact / Arial Bold).")
+    sys.exit("No usable TTF found (Open Sans Thin).")
 
 
 def slug(text: str) -> str:
@@ -404,25 +437,26 @@ def wrap_lines(text: str) -> list[str]:
 def font_size_for(lines: list[str]) -> int:
     longest = max(len(s) for s in lines)
     if longest <= 5:
-        return 78
+        return 92
     if longest <= 9:
-        return 58
+        return 68
     if longest <= 14:
-        return 42
-    return 32
+        return 50
+    return 38
 
 
-def outline_draw(draw: ImageDraw.ImageDraw, xy, text, font, fill, width: int = 3):
+def outline_draw(draw: ImageDraw.ImageDraw, xy, text, font, fill, width: int = 1):
     x, y = xy
     a = fill[3] if len(fill) == 4 else 255
-    ol = (0, 0, 0, a)
-    for dx in range(-width, width + 1):
-        for dy in range(-width, width + 1):
-            if dx == 0 and dy == 0:
-                continue
-            if dx * dx + dy * dy > width * width:
-                continue
-            draw.text((x + dx, y + dy), text, font=font, fill=ol)
+    ol = (40, 40, 40, int(a * 0.55))
+    if width > 0:
+        for dx in range(-width, width + 1):
+            for dy in range(-width, width + 1):
+                if dx == 0 and dy == 0:
+                    continue
+                if dx * dx + dy * dy > width * width:
+                    continue
+                draw.text((x + dx, y + dy), text, font=font, fill=ol)
     draw.text((x, y), text, font=font, fill=fill)
 
 
@@ -439,205 +473,198 @@ def fade(t: float, seconds: float) -> float:
     return 1.0
 
 
-def layout_glyphs(lines: list[str], font: ImageFont.FreeTypeFont) -> list[dict]:
-    """Each glyph: {ch, line, i, x, y, line_w} in a SIZE canvas, centered block."""
-    dummy = ImageDraw.Draw(Image.new("RGBA", (SIZE, SIZE)))
+def layout_glyphs(
+    lines: list[str], font: ImageFont.FreeTypeFont, canvas: int = SIZE
+) -> list[dict]:
+    """Each glyph: {ch, line, word, i, x, y, cw} centered on a canvas×canvas square."""
+    dummy = ImageDraw.Draw(Image.new("RGBA", (canvas, canvas)))
     line_sizes = []
     for line in lines:
         bbox = dummy.textbbox((0, 0), line, font=font)
         line_sizes.append((bbox[2] - bbox[0], bbox[3] - bbox[1], -bbox[0], -bbox[1]))
     gap = 6
     total_h = sum(h for _, h, _, _ in line_sizes) + gap * (len(lines) - 1)
-    y0 = (SIZE - total_h) // 2 - 8
+    y0 = (canvas - total_h) // 2 - 8
     glyphs: list[dict] = []
     gi = 0
+    wi = 0
     y = y0
     for li, line in enumerate(lines):
         lw, lh, ox, oy = line_sizes[li]
-        x0 = (SIZE - lw) // 2
+        x0 = (canvas - lw) // 2
         x = x0
         for ch in line:
+            if ch == " ":
+                wi += 1
             cb = dummy.textbbox((0, 0), ch, font=font)
             cw = cb[2] - cb[0]
             glyphs.append(
                 {
                     "ch": ch,
                     "line": li,
+                    "word": wi,
                     "i": gi,
                     "x": x - cb[0],
                     "y": y - cb[1],
                     "cw": cw,
+                    "lh": lh,
                 }
             )
             x += cw
             gi += 1
+        wi += 1
         y += lh + gap
     return glyphs
 
 
-def text_layer(text: str, font_path: Path, t: float, seconds: float, style: int) -> Image.Image:
-    layer = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    lines = wrap_lines(text)
-    display = [ln.upper() if style in {0, 6, 7, 9} else ln for ln in lines]
-    if style in {0, 3, 6, 7, 9}:
-        display = [ln.upper() for ln in lines]
-    font = load_font(font_path, font_size_for(display))
-    glyphs = layout_glyphs(display, font)
-    n = max(1, len(glyphs))
-    a_fade = fade(t, seconds)
-    kind = style % 10
-    draw_img = layer
-    d = ImageDraw.Draw(draw_img)
+SHADOW_DX = 2
+SHADOW_DY = 2
+SHADOW = (0, 0, 0, 220)
+FILL = (255, 255, 255, 245)
+KARAOKE = (255, 214, 70, 245)
 
-    def alpha(v: float) -> int:
-        return max(0, min(255, int(255 * v * a_fade)))
 
-    if kind == 0:  # impact bounce
-        scale = 1.0 + 0.1 * math.sin(t * 2.1 * math.pi * 2)
-        tmp = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-        td = ImageDraw.Draw(tmp)
-        for g in glyphs:
-            outline_draw(td, (g["x"], g["y"]), g["ch"], font, (255, 255, 255, alpha(1)))
-        if abs(scale - 1) > 0.01:
-            nw = max(1, int(SIZE * scale))
-            tmp = tmp.resize((nw, nw), Image.Resampling.LANCZOS)
-            out = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-            out.paste(tmp, ((SIZE - nw) // 2, (SIZE - nw) // 2))
-            return out
-        return tmp
+def caption_setup(
+    text: str, font_path: Path, canvas: int = SIZE
+) -> tuple[list[dict], ImageFont.FreeTypeFont]:
+    lines = wrap_lines(text.upper())
+    size = max(24, int(round(font_size_for(lines) * (canvas / SIZE))))
+    font = load_font(font_path, size)
+    return layout_glyphs(lines, font, canvas=canvas), font
 
-    if kind == 1:  # typewriter
-        shown = int(min(n, math.floor((t / max(0.15, seconds * 0.55)) * n) + 1))
-        for g in glyphs[:shown]:
-            if g["ch"] == " ":
-                continue
-            outline_draw(d, (g["x"], g["y"]), g["ch"], font, (255, 255, 255, alpha(1)))
-        return layer
 
-    if kind == 2:  # rainbow stagger
-        for g in glyphs:
-            delay = g["i"] * 0.09
-            local = min(1.0, max(0.0, (t - delay) / 0.25))
-            if local <= 0 or g["ch"] == " ":
-                continue
-            col = hsv((g["i"] * 0.12 + t * 0.15) % 1.0, 0.9, 1.0, alpha(local))
-            outline_draw(d, (g["x"], g["y"]), g["ch"], font, col)
-        return layer
+def draw_glyph(
+    draw: ImageDraw.ImageDraw,
+    g: dict,
+    font,
+    x: int,
+    y: int,
+    a: int,
+    fill: tuple[int, int, int, int] | None = None,
+    chroma: bool = False,
+) -> None:
+    sa = int(SHADOW[3] * (a / 245))
+    fill = fill or FILL
+    fa = int(fill[3] * (a / 245))
+    rgb = (fill[0], fill[1], fill[2], fa)
+    draw.text((x + SHADOW_DX, y + SHADOW_DY), g["ch"], font=font, fill=(0, 0, 0, sa))
+    if chroma:
+        ca = max(40, int(fa * 0.55))
+        draw.text((x - 5, y), g["ch"], font=font, fill=(255, 36, 56, ca))
+        draw.text((x + 5, y + 1), g["ch"], font=font, fill=(40, 150, 255, ca))
+    draw.text((x, y), g["ch"], font=font, fill=rgb)
 
-    if kind == 3:  # drop in
-        for g in glyphs:
-            delay = g["i"] * 0.07
-            u = min(1.0, max(0.0, (t - delay) / 0.28))
-            if u <= 0 or g["ch"] == " ":
-                continue
-            dy = int((1 - u) ** 2 * -70)
-            outline_draw(d, (g["x"], g["y"] + dy), g["ch"], font, (255, 255, 255, alpha(u)))
-        return layer
 
-    if kind == 4:  # neon pulse
-        hue = (t * 0.35) % 1.0
-        col = hsv(hue, 0.7, 1.0, alpha(1))
-        glow = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-        gd = ImageDraw.Draw(glow)
-        for g in glyphs:
-            if g["ch"] == " ":
-                continue
-            outline_draw(gd, (g["x"], g["y"]), g["ch"], font, col, width=1)
-        glow = glow.filter(ImageFilter.GaussianBlur(4))
-        layer = Image.alpha_composite(layer, glow)
-        d = ImageDraw.Draw(layer)
-        pulse = 0.75 + 0.25 * math.sin(t * 6)
-        col2 = hsv(hue, 0.4, 1.0, alpha(pulse))
-        for g in glyphs:
-            if g["ch"] == " ":
-                continue
-            outline_draw(d, (g["x"], g["y"]), g["ch"], font, col2)
-        return layer
+def caption_frame(
+    glyphs: list[dict],
+    font: ImageFont.FreeTypeFont,
+    t: float,
+    seconds: float,
+    kind: str,
+    canvas: int = SIZE,
+) -> Image.Image:
+    """Open Sans Thin + tiny pure-black drop shadow, optional attention motion."""
+    layer = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    letters = [g for g in glyphs if g["ch"] != " "]
+    n = max(1, len(letters))
+    intro = min(1.45, seconds * 0.42)
+    rng = random.Random(int(t * 28) + 11)
+    words = sorted({g["word"] for g in letters})
+    n_words = max(1, len(words))
+    word_now = words[min(n_words - 1, int((t / max(0.05, seconds)) * n_words))]
+    track = 0.0
+    if kind == "tracking":
+        track = 3.6 * math.sin(t * 5.0)
 
-    if kind == 5:  # karaoke words
-        words: list[list[dict]] = []
-        cur: list[dict] = []
-        for g in glyphs:
-            if g["ch"] == " " and cur:
-                words.append(cur)
-                cur = []
-            elif g["ch"] != " ":
-                cur.append(g)
-        if cur:
-            words.append(cur)
-        wn = max(1, len(words))
-        active = min(wn - 1, int(t / max(0.2, seconds * 0.7) * wn))
-        for wi, word in enumerate(words):
-            on = wi <= active
-            u = 1.0 if on else 0.0
-            if wi == active:
-                u = 1.0
-            col = (255, 230, 80, alpha(1)) if wi == active else (255, 255, 255, alpha(0.55 if on else 0.0))
-            if not on and wi != active:
-                continue
-            for g in word:
-                outline_draw(d, (g["x"], g["y"]), g["ch"], font, col)
-        return layer
+    xs = [g["x"] for g in letters]
+    ys = [g["y"] + g.get("lh", 0) for g in letters]
+    block_left = min(xs) if xs else canvas // 4
+    block_right = max(g["x"] + g["cw"] for g in letters) if letters else canvas * 3 // 4
+    block_bottom = max(ys) if ys else canvas // 2 + 20
+    mid_x = (block_left + block_right) / 2.0
 
-    if kind == 6:  # shake
-        jx = int(4 * math.sin(t * 55))
-        jy = int(3 * math.cos(t * 47))
-        for g in glyphs:
-            if g["ch"] == " ":
-                continue
-            outline_draw(d, (g["x"] + jx, g["y"] + jy), g["ch"], font, (255, 255, 255, alpha(1)))
-        return layer
-
-    if kind == 7:  # glitch chroma
-        scale = 1.08 if t < 0.35 else 1.0 + 0.04 * math.sin(t * 8)
-        off = 3 if t < 0.5 or (int(t * 12) % 7 == 0) else 2
-        tmp = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-        for channel, dx in (( (255, 40, 40, alpha(0.85)), -off), ( (40, 220, 255, alpha(0.85)), off)):
-            td = ImageDraw.Draw(tmp)
-            for g in glyphs:
-                if g["ch"] == " ":
-                    continue
-                td.text((g["x"] + dx, g["y"]), g["ch"], font=font, fill=channel)
-        td = ImageDraw.Draw(tmp)
-        for g in glyphs:
-            if g["ch"] == " ":
-                continue
-            outline_draw(td, (g["x"], g["y"]), g["ch"], font, (255, 255, 255, alpha(1)))
-        if abs(scale - 1) > 0.01:
-            nw = max(1, int(SIZE * scale))
-            tmp = tmp.resize((nw, nw), Image.Resampling.LANCZOS)
-            out = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-            out.paste(tmp, ((SIZE - nw) // 2, (SIZE - nw) // 2))
-            return out
-        return tmp
-
-    if kind == 8:  # wave
-        for g in glyphs:
-            if g["ch"] == " ":
-                continue
-            dy = int(10 * math.sin(t * 8 + g["i"] * 0.55))
-            col = hsv((0.75 + g["i"] * 0.08 + t * 0.2) % 1.0, 0.55, 1.0, alpha(1))
-            outline_draw(d, (g["x"], g["y"] + dy), g["ch"], font, col)
-        return layer
-
-    # stamp
-    if t < 0.08:
-        flash = Image.new("RGBA", (SIZE, SIZE), (255, 255, 255, alpha(1)))
-        return flash
-    rot = 0 if t > 0.25 else (1 - t / 0.25) * -12
-    tmp = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    td = ImageDraw.Draw(tmp)
-    col = (255, 50, 50, alpha(1)) if "diss" in text.lower() or "poor" in text.lower() else (40, 220, 90, alpha(1))
-    if kind == 9 and "approves" in text.lower() and "diss" not in text.lower():
-        col = (40, 220, 90, alpha(1))
     for g in glyphs:
         if g["ch"] == " ":
             continue
-        outline_draw(td, (g["x"], g["y"]), g["ch"], font, col, width=4)
-    if rot:
-        tmp = tmp.rotate(rot, resample=Image.Resampling.BICUBIC, expand=False)
-    return tmp
+        x = float(g["x"]) + track * (g["i"] - (n - 1) / 2.0)
+        y = float(g["y"])
+        a = 245
+        u_i = g["i"] / n
+        fill = FILL
+        chroma = kind == "chroma"
 
+        if kind == "typewriter":
+            if t < u_i * intro:
+                continue
+        elif kind == "stagger":
+            start = u_i * intro
+            fade_u = min(1.0, max(0.0, (t - start) / 0.2))
+            if fade_u <= 0:
+                continue
+            a = int(245 * fade_u)
+        elif kind == "drop_in":
+            start = u_i * intro * 0.75
+            drop_u = min(1.0, max(0.0, (t - start) / 0.3))
+            if drop_u <= 0:
+                continue
+            y = y - 34 * (1.0 - drop_u) ** 2
+            a = int(245 * min(1.0, drop_u * 1.5))
+        elif kind == "wave":
+            y += 7 * math.sin(t * 7.0 + g["i"] * 0.55)
+        elif kind == "shake":
+            x += rng.randint(-2, 2)
+            y += rng.randint(-2, 2)
+        elif kind == "flash":
+            if 0.38 <= (t % 1.2) <= 0.5:
+                a = 36
+        elif kind == "karaoke":
+            fill = KARAOKE if g["word"] == word_now else FILL
+
+        draw_glyph(d, g, font, int(round(x)), int(round(y)), a, fill=fill, chroma=chroma)
+
+    if kind == "underline":
+        grow = min(1.0, t / min(1.1, seconds * 0.4))
+        half = (block_right - block_left) / 2.0 * grow
+        y_line = int(block_bottom + 6)
+        d.line(
+            [(int(mid_x - half), y_line), (int(mid_x + half), y_line)],
+            fill=(0, 0, 0, 200),
+            width=4,
+        )
+        d.line(
+            [(int(mid_x - half), y_line - 2), (int(mid_x + half), y_line - 2)],
+            fill=(255, 255, 255, 235),
+            width=3,
+        )
+
+    if kind == "pulse":
+        s = 1.0 + 0.055 * math.sin(t * 5.5)
+        return _scale_centered(layer, s, canvas)
+    if kind == "stamp":
+        u = min(1.0, t / 0.42)
+        s = 1.0 + 0.28 * (1.0 - u) * math.cos(u * math.pi * 2.2)
+        return _scale_centered(layer, s, canvas)
+    if kind == "wobble":
+        ang = 3.2 * math.sin(t * 6.2)
+        rot = layer.rotate(ang, resample=Image.Resampling.BILINEAR, expand=False)
+        return rot
+    return layer
+
+
+def _scale_centered(im: Image.Image, s: float, canvas: int) -> Image.Image:
+    nw = max(1, int(canvas * s))
+    scaled = im.resize((nw, nw), Image.Resampling.BILINEAR)
+    out = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0))
+    out.paste(scaled, ((canvas - nw) // 2, (canvas - nw) // 2), scaled)
+    return out
+
+
+def roll_attention(seed: str) -> str:
+    rng = random.Random(seed)
+    if rng.random() < 0.32:
+        return "still"
+    return rng.choice([k for k in ATTENTION_KINDS if k != "still"])
 
 def bulge_rgba(im: Image.Image, amount: float) -> Image.Image:
     try:
@@ -710,21 +737,25 @@ def roll_rare(seed: str) -> dict:
     }
 
 
-def chrome(frame: Image.Image, url: str, logo: Path | None, url_font_path: Path) -> Image.Image:
-    rgba = frame.convert("RGBA")
+def chrome(
+    frame: Image.Image,
+    url: str,
+    logo: Path | None,
+    url_font_path: Path,
+    show: bool,
+) -> Image.Image:
+    rgb = frame.convert("RGB")
+    if not show:
+        return rgb
+    w, h = rgb.size
+    rgba = rgb.convert("RGBA")
     draw = ImageDraw.Draw(rgba)
     font = load_font(url_font_path if url_font_path.is_file() else pick_font(), 16)
     bbox = draw.textbbox((0, 0), url, font=font)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    x = SIZE - tw - 12
-    y = SIZE - th - 12
-    pad = 6
-    draw.rounded_rectangle(
-        (x - pad, y - pad, x + tw + pad, y + th + pad),
-        radius=6,
-        fill=(0, 0, 0, 140),
-    )
-    draw.text((x, y), url, font=font, fill=(255, 255, 255, 245))
+    x = w - tw - 10
+    y = h - th - 10
+    draw.text((x, y), url, font=font, fill=(196, 196, 196, 210))
     if logo and logo.is_file():
         mark = Image.open(logo).convert("RGBA")
         mark.thumbnail((52, 52), Image.Resampling.LANCZOS)
@@ -804,17 +835,19 @@ def encode_overlay(
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     assert proc.stdin is not None
     n = min(len(frames), int(round(seconds * FPS)))
+    glyphs, font = caption_setup(text, font_path)
+    attention = (rare or {}).get("attention") or "still"
     try:
         for i in range(n):
             t = i / FPS
-            overlay = text_layer(text, font_path, t, seconds, style)
+            overlay = caption_frame(glyphs, font, t, seconds, attention)
             if rare.get("bulge"):
                 pulse = 0.65 + 0.35 * math.sin(t * 5.5)
                 overlay = bulge_rgba(overlay, float(rare.get("bulge_amt") or 0.28) * pulse)
             if rare.get("glitch"):
                 overlay = slice_glitch_rgba(overlay, t)
             composed = Image.alpha_composite(frames[i].convert("RGBA"), overlay)
-            out = chrome(composed, url, logo, url_font)
+            out = chrome(composed, url, logo, url_font, show=(t >= seconds - 1.0))
             out = end_transition_rgb(out, t, seconds, rare.get("end"))
             proc.stdin.write(out.tobytes())
         proc.stdin.close()
@@ -839,6 +872,42 @@ def unique_dest(folder: Path, text: str, url: str) -> Path:
     return dest
 
 
+def archive_old() -> int:
+    """Move live GIFs into Telegram Gifs/old/, keeping category subfolders."""
+    old_root = OUT_DIR / "old"
+    moved = 0
+    for path in list(OUT_DIR.rglob("*.mp4")):
+        if ".work" in path.parts or "old" in path.parts:
+            continue
+        rel = path.relative_to(OUT_DIR)
+        dest = old_root / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.exists():
+            dest = dest.with_name(f"{dest.stem}-{datetime.now().strftime('%H%M%S')}{dest.suffix}")
+        shutil.move(str(path), str(dest))
+        print(f"old {rel} → {dest.relative_to(OUT_DIR)}")
+        moved += 1
+    print(f"Archived {moved} GIFs into old/")
+    return moved
+
+
+def unique_phrases_from(folder: Path) -> list[str]:
+    seen: set[str] = set()
+    phrases: list[str] = []
+    for path in sorted(folder.rglob("*.mp4")):
+        if ".work" in path.parts:
+            continue
+        phrase = phrase_from_filename(path.name).strip()
+        if not phrase:
+            continue
+        key = slug(phrase)
+        if key in seen:
+            continue
+        seen.add(key)
+        phrases.append(phrase)
+    return phrases
+
+
 def sort_existing() -> None:
     """Move already-made mp4s into category folders. Never delete. Skip unknowns."""
     for name in CATEGORIES:
@@ -846,7 +915,7 @@ def sort_existing() -> None:
     moved = 0
     left = 0
     for path in list(OUT_DIR.rglob("*.mp4")):
-        if ".work" in path.parts:
+        if ".work" in path.parts or "old" in path.parts:
             continue
         phrase = phrase_from_filename(path.name)
         cat = pick_category(phrase)
@@ -866,7 +935,14 @@ def sort_existing() -> None:
     print(f"Sorted {moved} files; {left} left uncategorized")
 
 
-def render_batch(phrases: list[str], dest_dir: Path | None, video: Path, phase: float = 0.0) -> None:
+def render_batch(
+    phrases: list[str],
+    dest_dir: Path | None,
+    video: Path,
+    phase: float = 0.0,
+    force_style: int | None = None,
+    force_rare: dict | None = None,
+) -> None:
     if not video.is_file():
         sys.exit(f"Missing source video: {video}")
     seconds = [duration_for(p, i) for i, p in enumerate(phrases)]
@@ -880,8 +956,11 @@ def render_batch(phrases: list[str], dest_dir: Path | None, video: Path, phase: 
         folder.mkdir(parents=True, exist_ok=True)
         start, crop = windows[i]
         dest = unique_dest(folder, phrase, url)
-        style = i % 10
-        rare = roll_rare(f"{phrase}|{start:.3f}|{i}")
+        style = force_style if force_style is not None else i % 10
+        rare = force_rare if force_rare is not None else roll_rare(f"{phrase}|{start:.3f}|{i}")
+        if "attention" not in rare:
+            rare = dict(rare)
+            rare["attention"] = roll_attention(f"att|{phrase}|{start:.3f}|{i}")
         extra = []
         if rare["bulge"]:
             extra.append("bulge")
@@ -892,24 +971,277 @@ def render_batch(phrases: list[str], dest_dir: Path | None, video: Path, phase: 
         extras = (" +" + ",".join(extra)) if extra else ""
         print(
             f"[{i + 1}/{len(phrases)}] {phrase!r}  {url}  {folder.name}  "
-            f"t={start:.0f}s  style={STYLE_NAMES[style]}{extras}  → {dest.name}"
+            f"t={start:.0f}s  att={rare.get('attention')}{extras}  → {dest.name}"
         )
         frames = extract_face_clip(video, start, seconds[i], crop)
         encode_overlay(frames, phrase, url, seconds[i], dest, style, LOGOS.get(url), rare)
     print(f"Wrote {len(phrases)} files")
 
 
+def motion_scores(video: Path, sample_fps: float = 2.0) -> tuple[list[float], float]:
+    """Downscaled frame-to-frame change. Returns (scores, sample_fps)."""
+    cache = WORK / "amethyst-motion.json"
+    if cache.is_file():
+        data = json.loads(cache.read_text())
+        if data.get("video") == str(video) and data.get("scores"):
+            return data["scores"], float(data.get("fps") or sample_fps)
+    ffmpeg = find_ffmpeg()
+    w, h = 160, 90
+    cmd = [
+        ffmpeg, "-nostdin", "-i", str(video),
+        "-an", "-vf", f"fps={sample_fps},scale={w}:{h}",
+        "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1",
+    ]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    assert proc.stdout is not None
+    frame_n = w * h * 3
+    prev: bytes | None = None
+    scores: list[float] = []
+    while True:
+        buf = proc.stdout.read(frame_n)
+        if not buf or len(buf) < frame_n:
+            break
+        if prev is None:
+            scores.append(0.0)
+        else:
+            total = 0
+            for a, b in zip(prev[::12], buf[::12]):
+                total += abs(a - b)
+            scores.append(total / max(1, len(prev[::12])))
+        prev = buf
+    proc.wait()
+    if len(scores) < 20:
+        sys.exit("Not enough motion samples from Amethyst video")
+    WORK.mkdir(parents=True, exist_ok=True)
+    cache.write_text(json.dumps({"video": str(video), "fps": sample_fps, "scores": scores}))
+    return scores, sample_fps
+
+
+def action_starts(scores: list[float], sample_fps: float, n: int, clip_s: float) -> list[float]:
+    """n start times on action, spaced through the video, skipping quiet heads/tails."""
+    dur = len(scores) / sample_fps
+    skip = min(25.0, dur * 0.04)
+    lo = int(skip * sample_fps)
+    hi = int((dur - skip - clip_s) * sample_fps)
+    hi = max(lo + 1, min(hi, len(scores) - 1))
+    window = scores[lo:hi]
+    # Smooth a little so flashes don't dominate.
+    smooth = window[:]
+    for i in range(1, len(smooth) - 1):
+        smooth[i] = (window[i - 1] + window[i] * 2 + window[i + 1]) / 4.0
+    min_gap = max(int((dur / (n + 2)) * sample_fps), int(clip_s * sample_fps) + 4)
+    picked: list[int] = []
+    order = sorted(range(len(smooth)), key=lambda i: smooth[i], reverse=True)
+    for idx in order:
+        if any(abs(idx - p) < min_gap for p in picked):
+            continue
+        picked.append(idx)
+        if len(picked) >= n:
+            break
+    if len(picked) < n:
+        step = max(1, (hi - lo) // n)
+        for k in range(n):
+            idx = min(len(smooth) - 1, k * step)
+            if idx not in picked:
+                picked.append(idx)
+            if len(picked) >= n:
+                break
+    picked = sorted(picked)[:n]
+    starts = []
+    for idx in picked:
+        peak_t = skip + idx / sample_fps
+        start = max(skip, peak_t - 1.15)
+        starts.append(round(start, 2))
+    return starts
+
+
+def extract_action_frames(
+    video: Path,
+    start: float,
+    seconds: float,
+    mode: str,
+) -> tuple[list[Image.Image], int, int]:
+    """mode=zoom → 720 square cover crop. mode=natural → 1280×720 16:9."""
+    ffmpeg = find_ffmpeg()
+    if mode == "zoom":
+        vf = (
+            "scale=720:720:force_original_aspect_ratio=increase,"
+            "crop=720:720,fps=30"
+        )
+        ow, oh = 720, 720
+    else:
+        vf = "scale=1280:720,fps=30"
+        ow, oh = 1280, 720
+    cmd = [
+        ffmpeg, "-nostdin", "-ss", f"{start:.3f}", "-t", f"{seconds:.3f}",
+        "-i", str(video),
+        "-an",
+        "-vf", vf,
+        "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1",
+    ]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    assert proc.stdout is not None
+    frame_n = ow * oh * 3
+    frames: list[Image.Image] = []
+    while True:
+        buf = proc.stdout.read(frame_n)
+        if not buf or len(buf) < frame_n:
+            break
+        frames.append(Image.frombytes("RGB", (ow, oh), buf))
+    proc.wait()
+    if not frames:
+        err = proc.stderr.read().decode("utf-8", "replace") if proc.stderr else ""
+        sys.exit(f"No action frames @{start:.1f}s:\n{err[-1500:]}")
+    return frames, ow, oh
+
+
+def mux_audio(video: Path, start: float, seconds: float, silent: Path, dest: Path) -> None:
+    ffmpeg = find_ffmpeg()
+    cmd = [
+        ffmpeg, "-nostdin", "-y",
+        "-i", str(silent),
+        "-ss", f"{start:.3f}", "-t", f"{seconds:.3f}", "-i", str(video),
+        "-map", "0:v:0", "-map", "1:a:0",
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "160k",
+        "-shortest", "-movflags", "+faststart", str(dest),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        sys.exit(f"audio mux failed for {dest.name}:\n{proc.stderr[-2000:]}")
+
+
+def encode_captioned_audio(
+    frames: list[Image.Image],
+    text: str,
+    url: str,
+    seconds: float,
+    dest: Path,
+    logo: Path | None,
+    rare: dict,
+    src_video: Path,
+    start: float,
+) -> None:
+    font_path = pick_font()
+    url_font = URL_FONT if URL_FONT.is_file() else font_path
+    ffmpeg = find_ffmpeg()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    w, h = frames[0].size
+    canvas = min(w, h)
+    glyphs, font = caption_setup(text, font_path, canvas=canvas)
+    attention = rare.get("attention") or "still"
+    silent = dest.with_suffix(".silent.mp4")
+    cmd = [
+        ffmpeg, "-nostdin", "-y",
+        "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}",
+        "-r", str(FPS), "-i", "-",
+        "-an", *encoder_args(ffmpeg), "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart", "-t", f"{seconds:.2f}", str(silent),
+    ]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    assert proc.stdin is not None
+    n = min(len(frames), int(round(seconds * FPS)))
+    ox = (w - canvas) // 2
+    oy = (h - canvas) // 2
+    try:
+        for i in range(n):
+            t = i / FPS
+            overlay = caption_frame(glyphs, font, t, seconds, attention, canvas=canvas)
+            composed = frames[i].convert("RGBA")
+            composed.alpha_composite(overlay, (ox, oy))
+            out = chrome(composed, url, logo, url_font, show=(t >= seconds - 1.0))
+            out = end_transition_rgb(out, t, seconds, rare.get("end")) if w == h else out
+            proc.stdin.write(out.tobytes())
+        proc.stdin.close()
+        err = proc.stderr.read().decode("utf-8", "replace") if proc.stderr else ""
+        code = proc.wait()
+    except BrokenPipeError:
+        err = proc.stderr.read().decode("utf-8", "replace") if proc.stderr else ""
+        code = proc.wait()
+    if code != 0:
+        silent.unlink(missing_ok=True)
+        sys.exit(f"ffmpeg failed for {dest.name}:\n{err[-2000:]}")
+    mux_audio(src_video, start, seconds, silent, dest)
+    silent.unlink(missing_ok=True)
+
+
+def render_amethyst(video: Path, phrases: list[str]) -> None:
+    if not video.is_file():
+        sys.exit(f"Missing Amethyst video: {video}")
+    clip_s = 6.4
+    print("Scanning Amethyst for action…")
+    scores, fps = motion_scores(video)
+    starts = action_starts(scores, fps, len(phrases), clip_s)
+    dest_music = OUT_DIR / "Music"
+    dest_spirit = OUT_DIR / "Spiritual"
+    dest_music.mkdir(parents=True, exist_ok=True)
+    dest_spirit.mkdir(parents=True, exist_ok=True)
+    for i, phrase in enumerate(phrases):
+        url = pick_url(phrase)
+        cat = pick_category(phrase) or "Music"
+        folder = OUT_DIR / cat if cat in CATEGORIES else dest_music
+        mode = "zoom" if i % 2 == 0 else "natural"
+        start = starts[i]
+        dest = unique_dest(folder, phrase, url)
+        rare = roll_rare(f"{phrase}|{start:.3f}|amethyst|{i}")
+        rare["attention"] = roll_attention(f"att|{phrase}|amethyst|{i}")
+        print(
+            f"[{i + 1}/{len(phrases)}] {phrase!r}  {mode}  t={start:.0f}s  "
+            f"att={rare['attention']}  → {dest.name}"
+        )
+        frames, _, _ = extract_action_frames(video, start, clip_s, mode)
+        encode_captioned_audio(
+            frames, phrase, url, clip_s, dest, LOGOS.get(url), rare, video, start
+        )
+    print(f"Wrote {len(phrases)} Amethyst clips with audio")
+
+
 def main() -> None:
     find_ffmpeg()
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--preset", choices=["more-20", "cult-10", "gm"])
+    p.add_argument("--preset", choices=["more-20", "cult-10", "gm", "look-test", "all", "amethyst-20"])
     p.add_argument("--video", type=Path, default=GALACTIC)
     p.add_argument("--sort", action="store_true", help="Move existing GIFs into category folders")
+    p.add_argument("--archive-old", action="store_true", help="Move live GIFs into Telegram Gifs/old/")
     args = p.parse_args()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     video = args.video if args.video.is_file() else GALACTIC
 
+    if args.archive_old:
+        archive_old()
+        if not args.preset and not args.sort:
+            return
+
+    if args.preset == "look-test":
+        quiet = {
+            "bulge": False,
+            "glitch": False,
+            "end": None,
+            "bulge_amt": 0.0,
+            "attention": "still",
+        }
+        render_batch(
+            ["GM"],
+            None,
+            video,
+            phase=0.4,
+            force_style=0,
+            force_rare=quiet,
+        )
+        return
+    if args.preset == "all":
+        if not args.archive_old:
+            archive_old()
+        phrases = unique_phrases_from(OUT_DIR / "old")
+        if not phrases:
+            sys.exit("No phrases found in Telegram Gifs/old/")
+        print(f"Regenerating {len(phrases)} unique captions")
+        render_batch(phrases, None, video, phase=0.12)
+        return
+    if args.preset == "amethyst-20":
+        src = args.video if args.video.is_file() and args.video != GALACTIC else AMETHYST
+        render_amethyst(src, AMETHYST_20)
+        return
     if args.sort or args.preset:
         sort_existing()
     if args.preset == "more-20":
@@ -923,7 +1255,7 @@ def main() -> None:
         return
     if args.sort:
         return
-    p.error("Need --sort and/or --preset gm|more-20|cult-10")
+    p.error("Need --sort, --archive-old, and/or --preset gm|more-20|cult-10|look-test|all|amethyst-20")
 
 
 if __name__ == "__main__":
