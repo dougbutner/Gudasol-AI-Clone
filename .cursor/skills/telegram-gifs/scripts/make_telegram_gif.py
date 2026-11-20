@@ -19,6 +19,8 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parents[4]
 OUT_DIR = ROOT / "Telegram Gifs"
+ARCHIVE_DIR = ROOT / "archives" / "Telegram-gifs"
+PERSONA_DIR = ROOT / "Gudasol Persona"
 CULT_DIR = OUT_DIR / "Cult of Code"
 WORK = OUT_DIR / ".work"
 CATEGORIES = ("Spiritual", "Crypto", "Music", "Gudasol")
@@ -794,6 +796,156 @@ def extract_face_clip(
     return frames
 
 
+def grab_video_frame(video: Path, t: float) -> Image.Image:
+    w, h = probe_wh(video)
+    ffmpeg = find_ffmpeg()
+    cmd = [
+        ffmpeg, "-nostdin", "-ss", f"{t:.3f}", "-i", str(video),
+        "-frames:v", "1", "-an",
+        "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1",
+    ]
+    proc = subprocess.run(cmd, capture_output=True)
+    raw = proc.stdout or b""
+    need = w * h * 3
+    if proc.returncode != 0 or len(raw) < need:
+        err = (proc.stderr or b"").decode("utf-8", "replace")[-1200:]
+        sys.exit(f"No still from {video.name} @{t:.1f}s:\n{err}")
+    return Image.frombytes("RGB", (w, h), raw[:need])
+
+
+def zoom_square(im: Image.Image, z: float) -> Image.Image:
+    w, h = im.size
+    z = max(1.0, float(z))
+    side = min(w, h) / z
+    cx, cy = w / 2.0, h / 2.0
+    x0 = max(0.0, cx - side / 2.0)
+    y0 = max(0.0, cy - side / 2.0)
+    x1 = min(float(w), x0 + side)
+    y1 = min(float(h), y0 + side)
+    return im.crop((int(x0), int(y0), int(x1), int(y1))).resize(
+        (SIZE, SIZE), Image.Resampling.LANCZOS
+    )
+
+
+def ken_burns_loop(im: Image.Image, seconds: float, zoom_end: float = 1.14) -> list[Image.Image]:
+    n = max(1, int(round(seconds * FPS)))
+    frames: list[Image.Image] = []
+    for i in range(n):
+        u = i / max(1, n - 1)
+        tri = 1.0 - abs(2.0 * u - 1.0)
+        z = 1.0 + (zoom_end - 1.0) * tri
+        frames.append(zoom_square(im, z))
+    return frames
+
+
+def pingpong_expressions(
+    a: Image.Image, b: Image.Image, seconds: float, hold: float = 0.42
+) -> list[Image.Image]:
+    n = max(1, int(round(seconds * FPS)))
+    hold_n = max(5, int(round(hold * FPS)))
+    frames: list[Image.Image] = []
+    for i in range(n):
+        src = a if (i // hold_n) % 2 == 0 else b
+        u = i / max(1, n - 1)
+        tri = 1.0 - abs(2.0 * u - 1.0)
+        z = 1.0 + 0.08 * tri
+        frames.append(zoom_square(src, z))
+    return frames
+
+
+def union_square(
+    c0: tuple[int, int, int], c1: tuple[int, int, int], src_w: int, src_h: int
+) -> tuple[int, int, int]:
+    x0, y0, s0 = c0
+    x1, y1, s1 = c1
+    xa = min(x0, x1)
+    ya = min(y0, y1)
+    xb = max(x0 + s0, x1 + s1)
+    yb = max(y0 + s0, y1 + s1)
+    side = max(xb - xa, yb - ya)
+    side = min(side, min(src_w, src_h))
+    side = max(64, int(side) // 2 * 2)
+    x = max(0, min(src_w - side, xa // 2 * 2))
+    y = max(0, min(src_h - side, ya // 2 * 2))
+    return x, y, side
+
+
+def crop_square(im: Image.Image, crop: tuple[int, int, int]) -> Image.Image:
+    x, y, side = crop
+    return im.crop((x, y, x + side, y + side)).resize((SIZE, SIZE), Image.Resampling.LANCZOS)
+
+
+def adjacent_expression_pairs(
+    rows: list[dict], src_w: int, src_h: int
+) -> list[tuple[float, float, tuple[int, int, int], float, tuple[int, int, int]]]:
+    hits: list[tuple[int, dict]] = []
+    for i, row in enumerate(rows):
+        face = largest_face(row)
+        if face:
+            hits.append((i, face))
+    pairs: list[tuple[float, float, tuple[int, int, int], float, tuple[int, int, int]]] = []
+    for (i0, f0), (i1, f1) in zip(hits, hits[1:]):
+        if i1 - i0 > 2:
+            continue
+        score = (
+            abs(float(f0["w"]) - float(f1["w"]))
+            + abs(float(f0["h"]) - float(f1["h"]))
+            + abs(float(f0["y"]) - float(f1["y"])) * 0.6
+            + abs(float(f0["x"]) - float(f1["x"])) * 0.3
+        )
+        c0 = square_from_face(f0, src_w, src_h)
+        c1 = square_from_face(f1, src_w, src_h)
+        pairs.append((score, float(i0), c0, float(i1), c1))
+    pairs.sort(key=lambda p: p[0], reverse=True)
+    return pairs
+
+
+def persona_face_stills() -> list[Image.Image]:
+    stills: list[Image.Image] = []
+    if not PERSONA_DIR.is_dir():
+        return stills
+    for path in sorted(PERSONA_DIR.iterdir()):
+        if path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
+            continue
+        cropped = still_face_crop(path)
+        if cropped is None:
+            continue
+        stills.append(cropped)
+    return stills
+
+
+def gudasol_motion_frames(
+    video: Path,
+    rows: list[dict],
+    src_w: int,
+    src_h: int,
+    seconds: float,
+    seed: str,
+    used_pairs: set[tuple[float, float]],
+    persona: list[Image.Image],
+    fallback_start: float,
+    fallback_crop: tuple[int, int, int],
+) -> tuple[list[Image.Image], str]:
+    rng = random.Random(seed)
+    pairs = [
+        p for p in adjacent_expression_pairs(rows, src_w, src_h)
+        if (p[1], p[3]) not in used_pairs
+    ]
+    use_persona = bool(persona) and (rng.random() < 0.35 or not pairs)
+    if use_persona:
+        still = persona[rng.randrange(len(persona))]
+        return ken_burns_loop(still, seconds), "still-zoom:persona"
+    if pairs and rng.random() < 0.72:
+        _score, t0, c0, t1, c1 = pairs[0]
+        used_pairs.add((t0, t1))
+        crop = union_square(c0, c1, src_w, src_h)
+        a = crop_square(grab_video_frame(video, t0), crop)
+        b = crop_square(grab_video_frame(video, t1), crop)
+        return pingpong_expressions(a, b, seconds), f"expr-pingpong:{t0:.0f}-{t1:.0f}"
+    still = crop_square(grab_video_frame(video, fallback_start), fallback_crop)
+    return ken_burns_loop(still, seconds), f"still-zoom:video@{fallback_start:.0f}"
+
+
 def still_face_crop(image: Path) -> Image.Image | None:
     tmp = WORK / "still_face"
     tmp.mkdir(parents=True, exist_ok=True)
@@ -873,21 +1025,21 @@ def unique_dest(folder: Path, text: str, url: str) -> Path:
 
 
 def archive_old() -> int:
-    """Move live GIFs into Telegram Gifs/old/, keeping category subfolders."""
-    old_root = OUT_DIR / "old"
+    """Move live GIFs into archives/Telegram-gifs/, keeping category subfolders."""
+    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
     moved = 0
     for path in list(OUT_DIR.rglob("*.mp4")):
-        if ".work" in path.parts or "old" in path.parts:
+        if ".work" in path.parts:
             continue
         rel = path.relative_to(OUT_DIR)
-        dest = old_root / rel
+        dest = ARCHIVE_DIR / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         if dest.exists():
             dest = dest.with_name(f"{dest.stem}-{datetime.now().strftime('%H%M%S')}{dest.suffix}")
         shutil.move(str(path), str(dest))
-        print(f"old {rel} → {dest.relative_to(OUT_DIR)}")
+        print(f"archive {rel} → {dest.relative_to(ROOT)}")
         moved += 1
-    print(f"Archived {moved} GIFs into old/")
+    print(f"Archived {moved} GIFs into archives/Telegram-gifs/")
     return moved
 
 
@@ -949,6 +1101,8 @@ def render_batch(
     src_w, src_h = probe_wh(video)
     rows = scan_galactic(video)
     windows = face_windows(rows, src_w, src_h, len(phrases), seconds, phase=phase)
+    persona = persona_face_stills()
+    used_pairs: set[tuple[float, float]] = set()
     for i, phrase in enumerate(phrases):
         url = pick_url(phrase)
         cat = pick_category(phrase)
@@ -969,11 +1123,29 @@ def render_batch(
         if rare["end"]:
             extra.append(f"end:{rare['end']}")
         extras = (" +" + ",".join(extra)) if extra else ""
-        print(
-            f"[{i + 1}/{len(phrases)}] {phrase!r}  {url}  {folder.name}  "
-            f"t={start:.0f}s  att={rare.get('attention')}{extras}  → {dest.name}"
-        )
-        frames = extract_face_clip(video, start, seconds[i], crop)
+        if cat == "Gudasol":
+            frames, motion = gudasol_motion_frames(
+                video,
+                rows,
+                src_w,
+                src_h,
+                seconds[i],
+                f"guda|{phrase}|{start:.3f}|{i}",
+                used_pairs,
+                persona,
+                start,
+                crop,
+            )
+            print(
+                f"[{i + 1}/{len(phrases)}] {phrase!r}  {url}  {folder.name}  "
+                f"{motion}  att={rare.get('attention')}{extras}  → {dest.name}"
+            )
+        else:
+            print(
+                f"[{i + 1}/{len(phrases)}] {phrase!r}  {url}  {folder.name}  "
+                f"t={start:.0f}s  att={rare.get('attention')}{extras}  → {dest.name}"
+            )
+            frames = extract_face_clip(video, start, seconds[i], crop)
         encode_overlay(frames, phrase, url, seconds[i], dest, style, LOGOS.get(url), rare)
     print(f"Wrote {len(phrases)} files")
 
@@ -1201,7 +1373,11 @@ def main() -> None:
     p.add_argument("--preset", choices=["more-20", "cult-10", "gm", "look-test", "all", "amethyst-20"])
     p.add_argument("--video", type=Path, default=GALACTIC)
     p.add_argument("--sort", action="store_true", help="Move existing GIFs into category folders")
-    p.add_argument("--archive-old", action="store_true", help="Move live GIFs into Telegram Gifs/old/")
+    p.add_argument(
+        "--archive-old",
+        action="store_true",
+        help="Move live GIFs into archives/Telegram-gifs/",
+    )
     args = p.parse_args()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1232,9 +1408,11 @@ def main() -> None:
     if args.preset == "all":
         if not args.archive_old:
             archive_old()
-        phrases = unique_phrases_from(OUT_DIR / "old")
+        phrases = unique_phrases_from(ARCHIVE_DIR)
         if not phrases:
-            sys.exit("No phrases found in Telegram Gifs/old/")
+            phrases = unique_phrases_from(OUT_DIR / "old")
+        if not phrases:
+            sys.exit("No phrases found in archives/Telegram-gifs/")
         print(f"Regenerating {len(phrases)} unique captions")
         render_batch(phrases, None, video, phase=0.12)
         return

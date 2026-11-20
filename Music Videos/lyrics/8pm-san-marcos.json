@@ -1,10 +1,11 @@
 {
   "song": "8PM San Marcos.mp3",
   "verified": true,
+  "shift": 0.0,
   "language": "en",
   "translate": false,
   "model": "faster-whisper/small",
-  "duration": 265.560825,
+  "duration": 265.613061,
   "words": [
     {
       "start": 1.8599999999999968,
@@ -3734,13 +3735,13 @@
   ],
   "lines": [
     {
-      "start": 1.8599999999999968,
+      "start": 1.86,
       "end": 4.46,
-      "text": "To create the physical culture"
+      "text": "to create the physical culture"
     },
     {
       "start": 4.46,
-      "end": 5.2,
+      "end": 5.8,
       "text": "of man"
     },
     {
@@ -3750,13 +3751,13 @@
     },
     {
       "start": 8.24,
-      "end": 8.9,
+      "end": 9.266,
       "text": "together."
     },
     {
-      "start": 9.74,
+      "start": 9.266,
       "end": 10.52,
-      "text": "That energy"
+      "text": "that energy"
     },
     {
       "start": 10.52,
@@ -3765,253 +3766,253 @@
     },
     {
       "start": 13.12,
-      "end": 14.28,
+      "end": 13.66,
       "text": "of desires was"
     },
     {
-      "start": 14.98,
+      "start": 13.66,
       "end": 17.48,
       "text": "creates a solar system connected"
     },
     {
       "start": 17.48,
-      "end": 18.1,
+      "end": 20.04,
       "text": "consciousness."
     },
     {
       "start": 20.04,
       "end": 21.88,
-      "text": "What if this is a dream?"
+      "text": "what if this is a dream?"
     },
     {
       "start": 22.82,
       "end": 24.98,
-      "text": "What would it all really mean?"
+      "text": "what would it all really mean?"
     },
     {
-      "start": 26.319999999999997,
+      "start": 26.32,
       "end": 28.12,
-      "text": "And if I can wake up"
+      "text": "and if i can wake up"
     },
     {
-      "start": 28.26,
-      "end": 31.04,
-      "text": "would I wanna go back"
+      "start": 28.12,
+      "end": 31.497,
+      "text": "would i wanna go back"
     },
     {
-      "start": 31.3,
-      "end": 33.78,
+      "start": 31.497,
+      "end": 32.14,
       "text": "bruh"
+    },
+    {
+      "start": 32.14,
+      "end": 33.78,
+      "text": "cause everyday i feel like"
     },
     {
       "start": 33.78,
       "end": 35.28,
-      "text": "Cause everyday I feel like"
+      "text": "dreams are nice and i can"
     },
     {
       "start": 35.28,
-      "end": 36.72,
-      "text": "dreams are nice And I can"
+      "end": 36.935,
+      "text": "watch it all like a rubi"
     },
     {
-      "start": 36.72,
-      "end": 38.9,
-      "text": "watch it all like a Rubi"
+      "start": 36.935,
+      "end": 38.866,
+      "text": "make a slice and see a movie"
     },
     {
-      "start": 38.9,
-      "end": 41.14,
-      "text": "make a slice And see a movie"
+      "start": 38.866,
+      "end": 41.28,
+      "text": "light and everything i had designed"
     },
     {
       "start": 41.28,
       "end": 42.48,
-      "text": "light And everything I had designed"
-    },
-    {
-      "start": 42.48,
-      "end": 43.84,
       "text": "it was one of a kind"
     },
     {
-      "start": 44.58,
-      "end": 46.9,
-      "text": "And I feel this a shine when I"
+      "start": 42.48,
+      "end": 44.482,
+      "text": "and i feel this a shine when i"
     },
     {
-      "start": 46.9,
+      "start": 44.482,
+      "end": 47.152,
+      "text": "connect &align and everything's combined"
+    },
+    {
+      "start": 47.152,
       "end": 48.82,
-      "text": "Connect &align and everything's combined"
+      "text": "i see this, outside of my"
     },
     {
       "start": 48.82,
       "end": 50.96,
-      "text": "I see this, outside of my"
+      "text": "eye there's lightning striking right now"
     },
     {
       "start": 50.96,
       "end": 52.86,
-      "text": "eye There's lightning striking right now"
+      "text": "and i can feel this air"
     },
     {
       "start": 52.86,
       "end": 54.98,
-      "text": "And I can feel this air"
+      "text": "energy charged and everything that i"
     },
     {
       "start": 54.98,
       "end": 56.82,
-      "text": "energy charged And everything that I"
+      "text": "left is just a scar"
     },
     {
       "start": 56.82,
       "end": 57.84,
-      "text": "left is just a scar"
+      "text": "i can see it but i"
     },
     {
       "start": 57.84,
       "end": 59.92,
-      "text": "I can see it But I"
+      "text": "really don't need to focus on"
     },
     {
       "start": 59.92,
       "end": 61.12,
-      "text": "really don't need to focus on"
+      "text": "it it's just gonna be a"
     },
     {
       "start": 61.12,
-      "end": 62.44,
-      "text": "it It's just gonna be a"
-    },
-    {
-      "start": 62.44,
       "end": 64.08,
-      "text": "part of the me And all that I have this experience"
+      "text": "part of the me and all that i have this experience"
     },
     {
       "start": 64.08,
       "end": 66.26,
-      "text": "that's so valuable And I know"
+      "text": "that's so valuable and i know"
     },
     {
       "start": 66.26,
       "end": 67.9,
-      "text": "some things that I have"
+      "text": "some things that i have"
     },
     {
       "start": 67.9,
       "end": 69.48,
-      "text": "I could try to sell to"
+      "text": "i could try to sell to"
     },
     {
       "start": 69.48,
       "end": 70.92,
-      "text": "make some money that I need"
+      "text": "make some money that i need"
     },
     {
       "start": 70.92,
       "end": 72.62,
-      "text": "To pay for this place cause"
+      "text": "to pay for this place cause"
     },
     {
       "start": 72.62,
-      "end": 74.3,
-      "text": "I seem so far from my"
+      "end": 74.209,
+      "text": "i seem so far from my"
     },
     {
-      "start": 74.3,
-      "end": 76.18,
+      "start": 74.209,
+      "end": 76.252,
       "text": "dreams at least financially"
     },
     {
-      "start": 76.18,
-      "end": 77.04,
-      "text": "When, Really"
+      "start": 76.252,
+      "end": 77.16,
+      "text": "when, really"
     },
     {
       "start": 77.16,
       "end": 79.32,
-      "text": "I just need to succeed Cause"
+      "text": "i just need to succeed cause"
     },
     {
       "start": 79.32,
-      "end": 81.06,
-      "text": "I can write code to make a"
+      "end": 80.642,
+      "text": "i can write code to make a"
     },
     {
-      "start": 81.06,
+      "start": 80.642,
       "end": 82.32,
-      "text": "whole new type of token on Monday"
+      "text": "whole new type of token on monday"
     },
     {
       "start": 82.32,
       "end": 84.6,
-      "text": "I do this that I don't"
+      "text": "i do this that i don't"
     },
     {
       "start": 84.6,
       "end": 86.08,
-      "text": "even know if I could exist"
+      "text": "even know if i could exist"
     },
     {
       "start": 86.08,
-      "end": 87.38,
-      "text": "Without all of the spirits that live in the house"
+      "end": 88.429,
+      "text": "without all of the spirits that live in the house"
     },
     {
-      "start": 87.38,
+      "start": 88.429,
       "end": 88.86,
       "text": "inside of"
     },
     {
       "start": 88.86,
       "end": 90.68,
-      "text": "my body But it seems crazy"
+      "text": "my body but it seems crazy"
     },
     {
       "start": 90.68,
       "end": 92.52,
-      "text": "and finally I got control over"
+      "text": "and finally i got control over"
     },
     {
       "start": 92.52,
       "end": 93.76,
-      "text": "me It only took like a"
+      "text": "me it only took like a"
     },
     {
       "start": 93.76,
       "end": 95.68,
-      "text": "decade But I feel like this"
+      "text": "decade but i feel like this"
     },
     {
       "start": 95.68,
       "end": 97.42,
-      "text": "life ain't the same And I"
+      "text": "life ain't the same and i"
     },
     {
       "start": 97.42,
-      "end": 99.44,
+      "end": 99.516,
       "text": "know that this is today and"
     },
     {
-      "start": 99.44,
+      "start": 99.516,
       "end": 101.38,
-      "text": "Tomorrow's gonna be anew"
+      "text": "tomorrow's gonna be anew"
     },
     {
       "start": 101.38,
       "end": 102.82,
-      "text": "so I see it better And"
+      "text": "so i see it better and"
     },
     {
       "start": 102.82,
       "end": 104.54,
-      "text": "I learned to command every single"
+      "text": "i learned to command every single"
     },
     {
       "start": 104.54,
       "end": 106.3,
-      "text": "thing I do with my hand it"
+      "text": "thing i do with my hand it"
     },
     {
       "start": 106.3,
@@ -4020,377 +4021,377 @@
     },
     {
       "start": 108.5,
-      "end": 109.92,
+      "end": 110.459,
       "text": "to find this place this pline"
     },
     {
-      "start": 109.92,
-      "end": 110.52,
-      "text": "this kind of rhyme where I"
+      "start": 110.459,
+      "end": 112.216,
+      "text": "this kind of rhyme where i"
     },
     {
-      "start": 110.74,
-      "end": 112.42,
+      "start": 112.216,
+      "end": 114.04,
       "text": "can be one with the ancient"
     },
     {
-      "start": 112.42,
-      "end": 114.64,
-      "text": "when I feel this When I"
-    },
-    {
-      "start": 114.76,
+      "start": 114.04,
       "end": 116.24,
-      "text": "feel connected up and I let my"
+      "text": "when i feel this when i"
     },
     {
       "start": 116.24,
-      "end": 116.8,
+      "end": 117.996,
+      "text": "feel connected up and i let my"
+    },
+    {
+      "start": 117.996,
+      "end": 118.64,
       "text": "joy finally"
     },
     {
-      "start": 116.8,
-      "end": 119.26,
-      "text": "be like me And I can"
-    },
-    {
-      "start": 119.26,
+      "start": 118.64,
       "end": 121.28,
-      "text": "let this eternal being that"
+      "text": "be like me and i can"
     },
     {
       "start": 121.28,
-      "end": 123.58,
-      "text": "we all are just start And"
+      "end": 123.36,
+      "text": "let this eternal being that"
     },
     {
-      "start": 123.58,
+      "start": 123.36,
       "end": 125.48,
-      "text": "I go into this chair so"
+      "text": "we all are just start and"
     },
     {
       "start": 125.48,
       "end": 127.5,
-      "text": "that I can be Just my"
+      "text": "i go into this chair so"
     },
     {
       "start": 127.5,
       "end": 129.32,
-      "text": "arms floating in the air The"
+      "text": "that i can be just my"
     },
     {
       "start": 129.32,
       "end": 131.58,
-      "text": "sensations taking this placement"
+      "text": "arms floating in the air the"
     },
     {
       "start": 131.58,
       "end": 134.18,
-      "text": "And I find my"
+      "text": "sensations taking this placement"
     },
     {
       "start": 134.18,
       "end": 136.58,
-      "text": "mind to unwind a different"
+      "text": "and i find my"
     },
     {
       "start": 136.58,
       "end": 139.26,
-      "text": "time I look around"
+      "text": "mind to unwind a different"
     },
     {
       "start": 139.26,
       "end": 141.02,
-      "text": "what I see Is all these"
+      "text": "time i look around"
     },
     {
       "start": 141.44,
       "end": 143.44,
-      "text": "different extensions of me And"
+      "text": "what i see is all these"
     },
     {
       "start": 143.44,
       "end": 145.96,
-      "text": "everything that I could perceive In"
+      "text": "different extensions of me and"
     },
     {
       "start": 145.96,
       "end": 148.98,
-      "text": "these chemical worlds But I see"
+      "text": "everything that i could perceive in"
     },
     {
       "start": 148.98,
       "end": 151.2,
-      "text": "them as a spectrum portrayed In"
+      "text": "these chemical worlds but i see"
     },
     {
       "start": 151.2,
       "end": 154.06,
-      "text": "a colorful space, And I just"
+      "text": "them as a spectrum portrayed in"
     },
     {
       "start": 154.06,
       "end": 156.4,
-      "text": "float my Waze so I can"
+      "text": "a colorful space, and i just"
     },
     {
       "start": 156.4,
-      "end": 158.22,
+      "end": 158.39,
+      "text": "float my waze so i can"
+    },
+    {
+      "start": 158.39,
+      "end": 160.56,
       "text": "paint this one detail in"
     },
     {
-      "start": 158.22,
-      "end": 161.3,
-      "text": "all but I hope that"
+      "start": 160.56,
+      "end": 162.82,
+      "text": "all but i hope that"
     },
     {
-      "start": 161.3,
-      "end": 163.24,
-      "text": "This is more than a hope"
-    },
-    {
-      "start": 163.24,
+      "start": 162.82,
       "end": 164.6,
-      "text": "it's a know And this is"
+      "text": "this is more than a hope"
     },
     {
-      "start": 164.72,
-      "end": 166.38,
-      "text": "why we go And this is"
+      "start": 164.6,
+      "end": 166.618,
+      "text": "it's a know and this is"
     },
     {
-      "start": 166.38,
-      "end": 168.68,
-      "text": "knowing that we are And commanding"
+      "start": 166.618,
+      "end": 168.46,
+      "text": "why we go and this is"
     },
     {
-      "start": 168.68,
+      "start": 168.46,
       "end": 170.98,
-      "text": "ourself to be a star So"
+      "text": "knowing that we are and commanding"
     },
     {
       "start": 170.98,
       "end": 172.62,
-      "text": "then we can go down the"
+      "text": "ourself to be a star so"
     },
     {
       "start": 172.62,
       "end": 173.96,
-      "text": "Knowledge that we need So I"
+      "text": "then we can go down the"
     },
     {
       "start": 173.96,
       "end": 175.56,
-      "text": "do this cause I'm just a"
+      "text": "knowledge that we need so i"
     },
     {
       "start": 175.56,
       "end": 176.74,
-      "text": "starbeing connected of these atoms"
+      "text": "do this cause i'm just a"
     },
     {
       "start": 176.74,
-      "end": 178.86,
-      "text": "And everything I find I do"
+      "end": 178.44,
+      "text": "starbeing connected of these atoms"
     },
     {
-      "start": 178.86,
+      "start": 178.44,
       "end": 180.96,
-      "text": "this through the dotted line And"
+      "text": "and everything i find i do"
     },
     {
       "start": 180.96,
       "end": 182.78,
-      "text": "I'll be the number one until"
+      "text": "this through the dotted line and"
     },
     {
       "start": 182.78,
       "end": 184.36,
-      "text": "the number nine Then back to"
+      "text": "i'll be the number one until"
     },
     {
       "start": 184.36,
       "end": 186.62,
-      "text": "the O So we can be"
+      "text": "the number nine then back to"
     },
     {
       "start": 186.62,
       "end": 188.22,
-      "text": "this fourth way And this is"
+      "text": "the o so we can be"
     },
     {
       "start": 188.22,
       "end": 190.4,
-      "text": "the five When it vibrates inside"
+      "text": "this fourth way and this is"
     },
     {
       "start": 190.4,
       "end": 192.76,
-      "text": "of my mind-state take me up to the six to find if"
+      "text": "the five when it vibrates inside"
     },
     {
       "start": 192.76,
-      "end": 195.4,
-      "text": "I exist divine When I'm up"
+      "end": 196.66,
+      "text": "of my mind-state take me up to the six to find if"
     },
     {
-      "start": 195.4,
-      "end": 197.04,
-      "text": "to the seven and aim with"
-    },
-    {
-      "start": 197.04,
+      "start": 196.66,
       "end": 199.22,
-      "text": "that eleven Yeah"
+      "text": "i exist divine when i'm up"
     },
     {
       "start": 199.22,
-      "end": 200.92,
-      "text": "I'd be mine"
+      "end": 200.574,
+      "text": "to the seven and aim with"
     },
     {
-      "start": 200.92,
-      "end": 202.04,
-      "text": "and I'd do this through the"
+      "start": 200.574,
+      "end": 201.44,
+      "text": "that eleven yeah"
     },
     {
-      "start": 202.08,
+      "start": 201.44,
       "end": 202.84,
-      "text": "sands of time It's the grand particle"
+      "text": "i'd be mine"
     },
     {
       "start": 202.86,
       "end": 204.64,
-      "text": "in everything that I feel And"
+      "text": "and i'd do this through the"
     },
     {
       "start": 204.64,
-      "end": 206.58,
-      "text": "I start to mold a new"
+      "end": 206.972,
+      "text": "sands of time it's the grand particle"
     },
     {
-      "start": 206.78,
-      "end": 207.26,
-      "text": "chemical kingdom With a different vibration"
+      "start": 206.972,
+      "end": 208.8,
+      "text": "in everything that i feel and"
     },
     {
-      "start": 207.26,
-      "end": 209.08,
-      "text": "and I'm taking my place, Yeah"
-    },
-    {
-      "start": 209.08,
+      "start": 208.8,
       "end": 210.74,
-      "text": "we connected down through outer space"
+      "text": "i start to mold a new"
     },
     {
       "start": 210.74,
       "end": 213.38,
-      "text": "I feel this galactic"
+      "text": "chemical kingdom with a different vibration"
     },
     {
       "start": 213.38,
       "end": 215.5,
-      "text": "wave when I visualize the shape"
+      "text": "and i'm taking my place, yeah"
     },
     {
       "start": 215.52,
       "end": 217.76,
-      "text": "inside of my chest And connect"
+      "text": "we connected down through outer space"
     },
     {
       "start": 217.76,
       "end": 220.18,
-      "text": "the waves to my left and"
+      "text": "i feel this galactic"
     },
     {
       "start": 220.18,
       "end": 222.76,
-      "text": "right arm into the palm And"
+      "text": "wave when i visualize the shape"
     },
     {
       "start": 222.76,
       "end": 224.98,
-      "text": "I feel this is what we"
+      "text": "inside of my chest and connect"
     },
     {
       "start": 224.98,
       "end": 227.12,
-      "text": "fill up and then I make"
+      "text": "the waves to my left and"
     },
     {
       "start": 227.12,
       "end": 229.44,
-      "text": "it wheel And decipher the Will"
+      "text": "right arm into the palm and"
     },
     {
       "start": 229.44,
       "end": 231.48,
-      "text": "and let it dance through me"
+      "text": "i feel this is what we"
     },
     {
       "start": 231.48,
-      "end": 233.44,
-      "text": "And I connect to all these"
+      "end": 233.19,
+      "text": "fill up and then i make"
     },
     {
-      "start": 233.44,
-      "end": 235.78,
-      "text": "different races of beings And that"
+      "start": 233.19,
+      "end": 235.42,
+      "text": "it wheel and decipher the will"
     },
     {
-      "start": 235.78,
+      "start": 235.42,
       "end": 237.9,
-      "text": "is the key if you want"
+      "text": "and let it dance through me"
     },
     {
       "start": 237.9,
       "end": 239.62,
-      "text": "to join the federation of the"
+      "text": "and i connect to all these"
     },
     {
       "start": 239.62,
       "end": 242.22,
-      "text": "nations Things that we take in"
+      "text": "different races of beings and that"
     },
     {
       "start": 242.22,
       "end": 244.06,
-      "text": "yeah I just stepped up and"
+      "text": "is the key if you want"
     },
     {
       "start": 244.06,
       "end": 246.14,
-      "text": "introduced it We the WON movement"
+      "text": "to join the federation of the"
     },
     {
       "start": 246.14,
-      "end": 247.78,
-      "text": "so I apply and fill back the vibe"
+      "end": 247.56,
+      "text": "nations things that we take in"
     },
     {
-      "start": 247.96,
+      "start": 247.56,
       "end": 249.78,
-      "text": "But I still need to conquer my own mind But I"
+      "text": "yeah i just stepped up and"
     },
     {
       "start": 249.78,
-      "end": 252.04,
+      "end": 252.185,
+      "text": "introduced it we the won movement"
+    },
+    {
+      "start": 252.185,
+      "end": 254.59,
+      "text": "so i apply and fill back the vibe"
+    },
+    {
+      "start": 254.59,
+      "end": 257.87,
+      "text": "but i still need to conquer my own mind but i"
+    },
+    {
+      "start": 257.87,
+      "end": 259.108,
       "text": "feel this is time"
     },
     {
-      "start": 252.54,
-      "end": 254.86,
+      "start": 259.108,
+      "end": 259.4,
       "text": "whoa"
     },
     {
-      "start": 254.86,
-      "end": 256.58,
-      "text": "Out of this solar system"
+      "start": 259.4,
+      "end": 261.1,
+      "text": "out of this solar system"
     },
     {
-      "start": 256.58,
-      "end": 262.16,
+      "start": 261.12,
+      "end": 266.7,
       "text": "collective consciousness"
     }
   ]

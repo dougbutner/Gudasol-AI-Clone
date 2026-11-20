@@ -27,23 +27,25 @@ This is a **repo skill** (`.cursor/skills/telegram-gifs/`). Font file: `fonts/Op
 
 Default source: **`Long Videos/Cracking the Galactic Code of Lifelight with Gudasol - 12min.mp4`**.
 
-When replacing a generation, **move live GIFs into `Telegram Gifs/old/`** (keep category subfolders). Never delete `old/`. New files always get a unique timestamp name.
+Still portraits: **`Gudasol Persona/`** (face-cropped when Vision finds a face).
+
+When replacing a generation, **move live GIFs into `archives/Telegram-gifs/`** (keep category subfolders). Never delete that archive. New files always get a unique timestamp name.
 
 ```bash
 python ".cursor/skills/telegram-gifs/scripts/make_telegram_gif.py" --help
 ```
 
-## Folders (under `Telegram Gifs/`)
+## Folders
 
 | Folder | What goes here |
 |--------|----------------|
-| `Crypto/` | HODL, REKT, WAGMI, APE, DYOR, … |
-| `Music/` | VIBE, BANGER, DROP, 432HZ, … |
-| `Spiritual/` | NAMASTE, OM, AWAKEN, cult, BASED, … |
-| `Gudasol/` | GM, GN, Guda …, Yves, code lines |
-| `old/` | Previous generations, archived as-is |
+| `Telegram Gifs/Crypto/` | HODL, REKT, WAGMI, APE, DYOR, … |
+| `Telegram Gifs/Music/` | VIBE, BANGER, DROP, 432HZ, … |
+| `Telegram Gifs/Spiritual/` | NAMASTE, OM, AWAKEN, cult, BASED, … |
+| `Telegram Gifs/Gudasol/` | GM, GN, Guda …, Yves, code lines |
+| `archives/Telegram-gifs/` | Previous generations, archived as-is |
 
-Uncategorized clips stay in `Telegram Gifs/` root.
+Uncategorized live clips stay in `Telegram Gifs/` root.
 
 ```bash
 python ".cursor/skills/telegram-gifs/scripts/make_telegram_gif.py" --sort
@@ -51,12 +53,23 @@ python ".cursor/skills/telegram-gifs/scripts/make_telegram_gif.py" --archive-old
 python ".cursor/skills/telegram-gifs/scripts/make_telegram_gif.py" --preset all
 ```
 
-`--preset all` archives live GIFs into `old/`, then regenerates **one clip per unique caption** found there.
+`--preset all` archives live GIFs into `archives/Telegram-gifs/`, then regenerates **one clip per unique caption** found there.
 
 ## Names
 
 `{slug}-{url}-gudasol-{YYYYMMDD-HHMMSS}.mp4`  
 Example: `gm-douglas.life-gudasol-20260828-112800.mp4`
+
+## Gudasol motion (folder `Gudasol/`)
+
+Do **not** play a live talking clip. Pick a **facial expression**, then loop it:
+
+1. **Still + slow zoom** — one Vision face frame from the source video, or a face crop from `Gudasol Persona/`. Ken Burns zoom in and back out so the Telegram loop is seamless.
+2. **Expression ping-pong** (video only) — two **next-in-order** face hits (adjacent 1fps scan frames). Hold each expression ~0.4s and alternate, with a light zoom on top.
+
+Prefer ping-pong when two nearby face boxes differ (mouth/head change). Otherwise use a still zoom.
+
+Crypto / Music / Spiritual clips still use short face-locked video extracts.
 
 ## Presets
 
@@ -68,7 +81,7 @@ python ".cursor/skills/telegram-gifs/scripts/make_telegram_gif.py" --preset cult
 python ".cursor/skills/telegram-gifs/scripts/make_telegram_gif.py" --preset all
 ```
 
-`--preset` (except `look-test` and `all`) also runs `--sort` first. `look-test` is still caption, no extra motion.
+`--preset` (except `look-test` and `all`) also runs `--sort` first. `look-test` is still caption, no extra motion (GM uses Gudasol still/ping-pong).
 
 ## URL rules
 

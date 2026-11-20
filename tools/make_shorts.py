@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
-"""Build 9:16 talking shorts from long videos. Local ffmpeg + Hugging Face Whisper."""
+"""Build 9:16 talking shorts from long videos. Local ffmpeg + Hugging Face Whisper.
+
+Gudasol, current look: python3 tools/make_shorts.py
+Aquarius Academy, first link in pending_videos.txt:
+  python3 tools/make_shorts.py --project "Aquarius Academy"
+
+Style keys are render-styles.json. Where a short starts and ends stays here.
+"""
 
 from __future__ import annotations
 
 import json
 import math
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -13,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
+
+from render_style import resolve
 
 ROOT = Path(__file__).resolve().parents[1]
 LONG_DIR = ROOT / "Long Videos"
@@ -75,6 +85,7 @@ W, H = 1080, 1920
 YELLOW = (255, 215, 0, 255)
 BLACK = (0, 0, 0, 255)
 WHITE = (255, 255, 255, 255)
+STYLE: dict = {}
 
 SAMPLE_FPS = 3.0
 CAMERA_FPS = 24.0
@@ -125,6 +136,8 @@ def probe_wh(path: Path) -> tuple[int, int]:
 
 
 def load_font(size: int) -> ImageFont.FreeTypeFont:
+    if STYLE.get("font_path"):
+        return ImageFont.truetype(STYLE["font_path"], size=size, index=int(STYLE.get("font_index") or 0))
     for path, index in FONT_PATHS:
         if path.exists():
             return ImageFont.truetype(str(path), size=size, index=index)
@@ -132,7 +145,12 @@ def load_font(size: int) -> ImageFont.FreeTypeFont:
 
 
 def render_caption_png(text: str, dest: Path, max_width: int = 980) -> Image.Image:
-    text = re.sub(r"\s+", " ", text).strip().upper()
+    text = re.sub(r"\s+", " ", text).strip()
+    case = STYLE.get("caption_case") or "upper"
+    if case == "upper":
+        text = text.upper()
+    elif case == "lower":
+        text = text.lower()
     dummy = ImageDraw.Draw(Image.new("RGBA", (4, 4)))
     if not text:
         img = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
@@ -140,6 +158,8 @@ def render_caption_png(text: str, dest: Path, max_width: int = 980) -> Image.Ima
         img.save(dest)
         return img
 
+    look = STYLE.get("caption_look") or {}
+    stroke_px = int(look.get("stroke_px") or 3) if look.get("draw") == "outline" else 0
     font_size = 92
     bbox = (0, 0, 0, 0)
     tw = th = 0
@@ -148,10 +168,32 @@ def render_caption_png(text: str, dest: Path, max_width: int = 980) -> Image.Ima
         font = load_font(font_size)
         bbox = dummy.textbbox((0, 0), text, font=font)
         tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        if tw + 80 <= max_width:
+        if tw + 80 + stroke_px * 2 <= max_width:
             break
         font_size -= 4
 
+    if look.get("draw") == "outline":
+        pad_x, pad_y = 28, 16
+        img = Image.new(
+            "RGBA",
+            (tw + pad_x * 2 + stroke_px * 2, th + pad_y * 2 + stroke_px * 2),
+            (0, 0, 0, 0),
+        )
+        ImageDraw.Draw(img).text(
+            (pad_x + stroke_px - bbox[0], pad_y + stroke_px - bbox[1]),
+            text,
+            font=font,
+            fill=tuple(look.get("ink") or WHITE),
+            stroke_width=stroke_px,
+            stroke_fill=tuple(look.get("stroke") or BLACK),
+        )
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        img.save(dest)
+        return img
+
+    fill = tuple(look["fill"]) if look.get("fill") else YELLOW
+    ink = tuple(look["ink"]) if look.get("ink") else BLACK
+    tick = tuple(look["tick"]) if look.get("tick") else WHITE
     pad_x, pad_y = 28, 10
     box_w = tw + pad_x * 2
     box_h = th + pad_y * 2
@@ -162,10 +204,10 @@ def render_caption_png(text: str, dest: Path, max_width: int = 980) -> Image.Ima
     dr = ImageDraw.Draw(img)
     x0 = tick_w + gap
     y0 = tick_over
-    dr.rectangle([x0, y0, x0 + box_w - 1, y0 + box_h - 1], fill=YELLOW)
-    dr.rectangle([0, 0, tick_w - 1, canvas_h - 1], fill=WHITE)
-    dr.rectangle([canvas_w - tick_w, 0, canvas_w - 1, canvas_h - 1], fill=WHITE)
-    dr.text((x0 + pad_x - bbox[0], y0 + pad_y - bbox[1]), text, font=font, fill=BLACK)
+    dr.rectangle([x0, y0, x0 + box_w - 1, y0 + box_h - 1], fill=fill)
+    dr.rectangle([0, 0, tick_w - 1, canvas_h - 1], fill=tick)
+    dr.rectangle([canvas_w - tick_w, 0, canvas_w - 1, canvas_h - 1], fill=tick)
+    dr.text((x0 + pad_x - bbox[0], y0 + pad_y - bbox[1]), text, font=font, fill=ink)
     dest.parent.mkdir(parents=True, exist_ok=True)
     img.save(dest)
     return img
@@ -175,7 +217,12 @@ def render_caption_frame(text: str, dest: Path) -> None:
     frame = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     bar = render_caption_png(text, dest.with_suffix(".bar.png"))
     x = (W - bar.width) // 2
-    y = H - bar.height - 220
+    place = STYLE.get("caption_place") or {}
+    if place.get("at") == "center":
+        y = int(round(H * float(place["center"]) - bar.height / 2))
+        y = max(0, min(H - bar.height, y))
+    else:
+        y = H - bar.height - 220
     frame.paste(bar, (x, y), bar)
     dest.parent.mkdir(parents=True, exist_ok=True)
     frame.save(dest)
@@ -1069,7 +1116,14 @@ def render_short(video: Path, start: float, end: float, cues: list[dict], plan: 
     src_w, src_h = probe_wh(video)
     duration = end - start
     logo = work / "logo.png"
-    prepare_logo(pick_logo(), logo)
+    if STYLE.get("logo") == "none":
+        logo_file = None
+    elif STYLE.get("logo"):
+        logo_file = ROOT / STYLE["logo"]
+    else:
+        logo_file = pick_logo()
+    if logo_file:
+        prepare_logo(logo_file, logo)
     cap_mov = build_caption_mov(cues, start, duration, work)
 
     if plan.mode == "letterbox":
@@ -1081,15 +1135,20 @@ def render_short(video: Path, start: float, end: float, cues: list[dict], plan: 
             vid_h -= 1
         inputs = [
             "-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", str(video),
-            "-i", str(art_png), "-i", str(logo),
+            "-i", str(art_png),
         ]
+        if logo_file:
+            inputs += ["-i", str(logo)]
         filters = [
             f"[0:v]scale={W}:{vid_h}:flags=lanczos,setsar=1[vid]",
             f"[1:v]scale={W}:{H}:flags=lanczos,setsar=1[bg]",
             "[bg][vid]overlay=(W-w)/2:(H-h)/2[base]",
-            "[base][2:v]overlay=W-w-36:36[logoed]",
         ]
-        cap_idx = 3
+        last = "base"
+        if logo_file:
+            filters.append("[base][2:v]overlay=W-w-36:36[logoed]")
+            last = "logoed"
+        cap_idx = 3 if logo_file else 2
     else:
         scaled_w = int(src_w * H / src_h)
         if scaled_w % 2:
@@ -1107,19 +1166,22 @@ def render_short(video: Path, start: float, end: float, cues: list[dict], plan: 
             crop = f"sendcmd=f={cmd_file.name},crop={W}:{H}:{x0}:0"
         else:
             crop = f"crop={W}:{H}:{x0}:0"
-        inputs = ["-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", str(video), "-i", str(logo)]
-        filters = [
-            f"[0:v]scale={scaled_w}:{H}:flags=lanczos,setsar=1,{crop}[base]",
-            "[base][1:v]overlay=W-w-36:36[logoed]",
-        ]
-        cap_idx = 2
+        inputs = ["-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", str(video)]
+        if logo_file:
+            inputs += ["-i", str(logo)]
+        filters = [f"[0:v]scale={scaled_w}:{H}:flags=lanczos,setsar=1,{crop}[base]"]
+        last = "base"
+        if logo_file:
+            filters.append("[base][1:v]overlay=W-w-36:36[logoed]")
+            last = "logoed"
+        cap_idx = 2 if logo_file else 1
 
     if cap_mov:
         inputs += ["-i", str(cap_mov)]
         filters.append(f"[{cap_idx}:v]format=rgba[cc]")
-        filters.append("[logoed][cc]overlay=0:0[vout]")
+        filters.append(f"[{last}][cc]overlay=0:0[vout]")
     else:
-        filters.append("[logoed]copy[vout]")
+        filters.append(f"[{last}]copy[vout]")
     cmd = [
         "ffmpeg", "-y", *inputs,
         "-filter_complex", ";".join(filters),
@@ -1141,9 +1203,164 @@ def default_videos() -> list[Path]:
     return found
 
 
+def next_youtube(text: str) -> tuple[str, int] | None:
+    found = re.search(
+        r"https?://(?:www\.|m\.)?(?:youtube\.com/(?:watch\?[^\s<>\"']+|shorts/[^\s<>\"']+|live/[^\s<>\"']+|embed/[^\s<>\"']+)|youtu\.be/[^\s<>\"']+)",
+        text,
+        re.I,
+    )
+    if not found:
+        return None
+    url = found.group(0).rstrip(").,;]}")
+    return url, found.start() + len(url)
+
+
+def chop_video(video: Path, out_dir: Path, name: str, plan_only: bool) -> list[Path] | None:
+    duration = probe_duration(video)
+    src_w, src_h = probe_wh(video)
+    print(f"\n{video.name} ({duration:.1f}s {src_w}x{src_h})")
+    payload = transcribe_hf(video)
+    words = payload.get("words") or []
+    windows = windows_from_transcript(payload, duration)
+    print(f"  {len(words)} words, {len(windows)} talking shorts")
+    cues = group_words(words, max_words=int(STYLE.get("words") or 3))
+    made: list[Path] = []
+    with tempfile.TemporaryDirectory() as td:
+        work = Path(td)
+        n = 0
+        for a, b in windows:
+            if not (MIN_SHORT <= (b - a) <= MAX_SHORT):
+                print(f"  skip {a:.1f}-{b:.1f}s ({b-a:.1f}s) outside 15s-3min")
+                continue
+            n += 1
+            clip_words = [w["text"] for w in words if float(w["start"]) >= a - 0.05 and float(w["end"]) <= b + 0.05]
+            preview = " ".join(clip_words)
+            if len(preview) > 110:
+                preview = preview[:110] + "..."
+            section_work = work / f"s{n:02d}"
+            section_work.mkdir()
+            if STYLE.get("frame") == "letterbox":
+                plan = FramingPlan("letterbox", "style", art=pick_art(f"{video.stem}-{n}"))
+            elif STYLE.get("frame") == "center-crop":
+                crop_w = src_h * 9 / 16
+                plan = FramingPlan("track", "style-center", crop_keys=[(0.0, max(0, int((src_w - crop_w) / 2)))])
+            else:
+                plan = plan_framing(video, a, b, src_w, src_h, section_work, seed=f"{video.stem}-{n}")
+            print(f"    plan s{n:02d} {a:.1f}-{b:.1f}s ({b-a:.1f}s) {plan.summary()} {preview}")
+            if plan_only:
+                continue
+            section_cues = [c for c in cues if c["end"] > a and c["start"] < b]
+            out = out_dir / f"{slug(name)}-s{n:02d}.mp4"
+            print(f"  s{n:02d} {a:.1f}-{b:.1f}s ({b-a:.1f}s) {plan.summary()}")
+            try:
+                render_short(video, a, b, section_cues, plan, section_work, out)
+            except subprocess.CalledProcessError as e:
+                err = e.stderr.decode() if e.stderr else str(e)
+                print(f"  ffmpeg failed: {err[-900:]}", file=sys.stderr)
+                return None
+            made.append(out)
+            print(f"    wrote {out}")
+    return made
+
+
+def run_project(project: Path, plan_only: bool) -> int:
+    cfg_path = project / "config.json"
+    pending = project / "pending_videos.txt"
+    if not cfg_path.is_file():
+        print(f"missing {cfg_path}", file=sys.stderr)
+        return 1
+    if not pending.is_file():
+        print(f"missing {pending}", file=sys.stderr)
+        return 1
+    STYLE.clear()
+    STYLE.update(resolve(json.loads(cfg_path.read_text(encoding="utf-8"))))
+    found = next_youtube(pending.read_text(encoding="utf-8"))
+    if not found:
+        print(f"no youtube link in {pending}")
+        return 0
+    url = found[0]
+    vid = re.search(r"(?:v=|/shorts/|/live/|/embed/|youtu\.be/)([\w-]{11})", url)
+    if not vid:
+        print(f"no video id in {url}", file=sys.stderr)
+        return 1
+    sources = project / "sources"
+    sources.mkdir(parents=True, exist_ok=True)
+    dest = sources / f"{vid.group(1)}.mp4"
+    info = dest.with_suffix(".info.json")
+    if not dest.is_file():
+        ytdlp = shutil.which("yt-dlp")
+        if not ytdlp:
+            for candidate in ("/usr/local/bin/yt-dlp", "/opt/homebrew/bin/yt-dlp"):
+                if Path(candidate).is_file():
+                    ytdlp = candidate
+                    break
+        if not ytdlp:
+            print("yt-dlp not found. Install it with: pip install -U yt-dlp", file=sys.stderr)
+            return 1
+        print(f"pull {url}")
+        try:
+            run(
+                [
+                    ytdlp, "--no-playlist",
+                    "-f", "bv*[vcodec^=avc1][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b",
+                    "--merge-output-format", "mp4",
+                    "--write-info-json",
+                    "-o", str(dest),
+                    url,
+                ]
+            )
+        except subprocess.CalledProcessError:
+            print(f"could not download {url}", file=sys.stderr)
+            return 1
+    if not dest.is_file():
+        print(f"download finished without {dest.name}", file=sys.stderr)
+        return 1
+    if not info.is_file():
+        info = Path(str(dest) + ".info.json")
+    title = vid.group(1)
+    if info.is_file():
+        try:
+            title = json.loads(info.read_text(encoding="utf-8")).get("title") or title
+        except json.JSONDecodeError:
+            pass
+    name = slug(title) or vid.group(1)
+    out_dir = project / name
+    print(f"{project.name}  {STYLE.get('font_name', 'default font')}  → {out_dir.relative_to(ROOT)}")
+    made = chop_video(dest, out_dir, name, plan_only)
+    if made is None:
+        return 1
+    if plan_only:
+        return 0
+    if not made:
+        print("no shorts from this video", file=sys.stderr)
+        return 1
+    text = pending.read_text(encoding="utf-8")
+    again = next_youtube(text)
+    if not again or again[0] != url:
+        print(f"left {pending.name} in place (the first link changed during the run)")
+        return 0
+    pending.write_text(text[again[1]:], encoding="utf-8")
+    print(f"removed the first link from {pending.name}")
+    print("\nDone:")
+    for path in made:
+        print(" ", path)
+    return 0
+
+
 def main() -> int:
+    args = sys.argv[1:]
+    plan_only = "--plan" in args
+    if "--project" in args:
+        slot = args.index("--project")
+        if slot + 1 >= len(args):
+            print('need a project folder, for example --project "Aquarius Academy"', file=sys.stderr)
+            return 1
+        project = Path(args[slot + 1])
+        if not project.is_absolute():
+            project = ROOT / project
+        return run_project(project, plan_only)
     OUT_DIR.mkdir(exist_ok=True)
-    names = [a for a in sys.argv[1:] if a != "--plan"]
+    names = [a for a in args if a != "--plan"]
     videos = []
     if names:
         for name in names:
@@ -1155,52 +1372,19 @@ def main() -> int:
         print("no long videos found", file=sys.stderr)
         return 1
 
-    made = []
+    made: list[Path] = []
     for video in videos:
         if not video.exists():
             print(f"skip missing {video}")
             continue
-        duration = probe_duration(video)
-        src_w, src_h = probe_wh(video)
-        print(f"\n{video.name} ({duration:.1f}s {src_w}x{src_h})")
-        payload = transcribe_hf(video)
-        words = payload.get("words") or []
-        windows = windows_from_transcript(payload, duration)
-        print(f"  {len(words)} words, {len(windows)} talking shorts")
-        cues = group_words(words)
-        with tempfile.TemporaryDirectory() as td:
-            work = Path(td)
-            n = 0
-            for a, b in windows:
-                if not (MIN_SHORT <= (b - a) <= MAX_SHORT):
-                    print(f"  skip {a:.1f}-{b:.1f}s ({b-a:.1f}s) outside 15s-3min")
-                    continue
-                n += 1
-                clip_words = [w["text"] for w in words if float(w["start"]) >= a - 0.05 and float(w["end"]) <= b + 0.05]
-                preview = " ".join(clip_words)
-                if len(preview) > 110:
-                    preview = preview[:110] + "..."
-                section_work = work / f"s{n:02d}"
-                section_work.mkdir()
-                plan = plan_framing(video, a, b, src_w, src_h, section_work, seed=f"{video.stem}-{n}")
-                print(f"    plan s{n:02d} {a:.1f}-{b:.1f}s ({b-a:.1f}s) {plan.summary()} {preview}")
-                if "--plan" in sys.argv:
-                    continue
-                section_cues = [c for c in cues if c["end"] > a and c["start"] < b]
-                out = OUT_DIR / f"{slug(video.stem)}-s{n:02d}.mp4"
-                print(f"  s{n:02d} {a:.1f}-{b:.1f}s ({b-a:.1f}s) {plan.summary()}")
-                try:
-                    render_short(video, a, b, section_cues, plan, section_work, out)
-                except subprocess.CalledProcessError as e:
-                    err = e.stderr.decode() if e.stderr else str(e)
-                    print(f"  ffmpeg failed: {err[-900:]}", file=sys.stderr)
-                    return 1
-                made.append(out)
-                print(f"    wrote {out.name}")
+        got = chop_video(video, OUT_DIR, video.stem, plan_only)
+        if got is None:
+            return 1
+        made.extend(got)
     print("\nDone:")
-    for p in made:
-        print(" ", p)
-    if "--plan" in sys.argv:
+    for path in made:
+        print(" ", path)
+    if plan_only:
         return 0
     return 0 if made else 1
 

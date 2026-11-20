@@ -1,0 +1,188 @@
+{
+  "note": "Style choices for shorts and music renders. A project config.json may set these keys only. Clip length, pauses, and where a short starts stay in tools/make_shorts.py for every project. Omitted keys keep that renderer's current look.",
+  "gloss": {
+    "caption_case": {
+      "upper": "Talking shorts and Perfect Clips.",
+      "lower": "Music videos.",
+      "as-spoken": "Leave the transcript casing."
+    },
+    "frame": {
+      "face-follow": "Form of the current talking shorts. The crop follows a face.",
+      "letterbox": "Wide picture sits on fractal art. The shorts renderer already does this when a face track will not hold.",
+      "center-crop": "Cover-crop the middle. Music videos and the galactic cards."
+    },
+    "words": {
+      "1": "One word at a time, the Perfect Clips count.",
+      "3": "Up to three words, the talking-shorts grouping."
+    }
+  },
+  "used_by": {
+    "shorts": ["font", "caption_case", "caption_look", "caption_place", "frame", "logo", "words"],
+    "music": ["font", "caption_case", "caption_look", "caption_place"]
+  },
+  "examples": {
+    "gudasol-short": {
+      "font": "bebas-neue-bold",
+      "caption_case": "upper",
+      "caption_look": "yellow-chip",
+      "caption_place": "bottom-safe",
+      "frame": "face-follow",
+      "logo": "easy",
+      "words": 3
+    },
+    "gudasol-music": {
+      "font": "open-sans-bold",
+      "caption_case": "lower",
+      "caption_look": "white-outline",
+      "caption_place": "golden"
+    },
+    "aquarius-short": {
+      "font": "bebas-neue",
+      "caption_case": "upper",
+      "caption_look": "yellow-chip",
+      "caption_place": "bottom-safe",
+      "frame": "face-follow",
+      "logo": "aquarius",
+      "words": 3
+    }
+  },
+  "options": {
+    "font": {
+      "bebas-neue": {
+        "file": "BebasNeue Regular.otf",
+        "name": "Bebas Neue Regular",
+        "about": "BEBAS NEUE. Aquarius Academy shorts."
+      },
+      "bebas-neue-bold": {
+        "file": "BebasNeue Bold.otf",
+        "name": "Bebas Neue Bold",
+        "about": "Face the talking-shorts renderer already loads first."
+      },
+      "bebas-neue-book": {
+        "file": "BebasNeue Book.otf",
+        "name": "Bebas Neue Book",
+        "about": "Same Bebas Neue family, book cut."
+      },
+      "bebas-neue-light": {
+        "file": "BebasNeue Light.otf",
+        "name": "Bebas Neue Light",
+        "about": "Same Bebas Neue family, light cut."
+      },
+      "bebas-neue-thin": {
+        "file": "BebasNeue Thin.otf",
+        "name": "Bebas Neue Thin",
+        "about": "Same Bebas Neue family, thin cut."
+      },
+      "open-sans-bold": {
+        "file": "OpenSans-Bold.ttf",
+        "repo": ".cursor/skills/telegram-gifs/fonts/OpenSans-Bold.ttf",
+        "name": "Open Sans Bold",
+        "about": "Music videos."
+      },
+      "open-sans-thin": {
+        "file": "OpenSans-Thin.ttf",
+        "repo": ".cursor/skills/telegram-gifs/fonts/OpenSans-Thin.ttf",
+        "name": "Open Sans",
+        "about": "File the galactic theme cards point at."
+      },
+      "open-sans": {
+        "file": "OpenSans-Regular.ttf",
+        "name": "Open Sans Regular",
+        "about": "Open Sans regular cut."
+      },
+      "avenir-next-condensed": {
+        "file": "/System/Library/Fonts/Avenir Next Condensed.ttc",
+        "index": 8,
+        "name": "Avenir Next Condensed Heavy",
+        "about": "Fallback already listed in the shorts renderer (collection index 8)."
+      },
+      "impact": {
+        "file": "/System/Library/Fonts/Supplemental/Impact.ttf",
+        "name": "Impact",
+        "about": "Last fallback already listed in the shorts renderer."
+      },
+      "montserrat": {
+        "file": "Montserrat-Variable.ttf",
+        "repo": "Clips Tech Reference /assets/Montserrat-Variable.ttf",
+        "name": "Montserrat",
+        "about": "Perfect Clips caption face."
+      }
+    },
+    "caption_case": ["upper", "lower", "as-spoken"],
+    "caption_look": {
+      "yellow-chip": {
+        "draw": "chip",
+        "fill": [255, 215, 0, 255],
+        "ink": [0, 0, 0, 255],
+        "tick": [255, 255, 255, 255],
+        "about": "Talking shorts. Black letters on a gold bar with white side ticks."
+      },
+      "classic-yellow": {
+        "draw": "chip",
+        "fill": [255, 212, 0, 255],
+        "ink": [0, 0, 0, 255],
+        "tick": [255, 255, 255, 255],
+        "about": "Perfect Clips classic yellow #FFD400."
+      },
+      "purple-chip": {
+        "draw": "chip",
+        "fill": [124, 92, 255, 255],
+        "ink": [255, 255, 255, 255],
+        "tick": [255, 255, 255, 255],
+        "about": "Perfect Clips electric purple #7C5CFF."
+      },
+      "white-chip": {
+        "draw": "chip",
+        "fill": [255, 255, 255, 255],
+        "ink": [0, 0, 0, 255],
+        "tick": [0, 0, 0, 255],
+        "about": "Perfect Clips clean white chip."
+      },
+      "white-outline": {
+        "draw": "outline",
+        "ink": [255, 255, 255, 255],
+        "stroke": [0, 0, 0, 255],
+        "stroke_px": 3,
+        "about": "Music videos. White letters, black outline, no chip."
+      }
+    },
+    "caption_place": {
+      "bottom-safe": {
+        "at": "bottom-220",
+        "center": 0.86,
+        "about": "Shorts keep the bar 220px above the bottom. Music uses a 0.86 center, the YouTube long-form band."
+      },
+      "lower-third": {
+        "at": "center",
+        "center": 0.73,
+        "about": "Perfect Clips shorts. Chip center at 73% of the frame height."
+      },
+      "golden": {
+        "at": "center",
+        "center": 0.618,
+        "about": "Music videos. Caption block centered at 61.8% from the top."
+      },
+      "youtube": {
+        "at": "center",
+        "center": 0.86,
+        "about": "Perfect Clips long-form. Center at 86% so the chip clears the YouTube control bar."
+      }
+    },
+    "frame": ["face-follow", "letterbox", "center-crop"],
+    "logo": {
+      "easy": {
+        "file": "Token Images/EASY.png",
+        "about": "Easy Token mark. Shorts with no logo key try this first."
+      },
+      "aquarius": {
+        "file": "Token Images/AA-Logo[PurpleInCircle][WhiteBG][1.4][512].png",
+        "about": "Aquarius Academy mark."
+      },
+      "none": {
+        "file": "",
+        "about": "No corner mark. Music renders do not draw a logo either way."
+      }
+    },
+    "words": [1, 3]
+  }
+}

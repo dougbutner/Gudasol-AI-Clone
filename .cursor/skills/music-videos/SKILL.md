@@ -11,7 +11,7 @@ description: >-
 
 Full-length **song videos**, not Shorts and not Telegram GIFs.
 
-Repo skill: `.cursor/skills/music-videos/`. Font: Open Sans Thin from `.cursor/skills/telegram-gifs/fonts/OpenSans-Thin.ttf`.
+Repo skill: `.cursor/skills/music-videos/`. Font: Open Sans Bold (default) from `.cursor/skills/telegram-gifs/fonts/OpenSans-Bold.ttf`.
 
 ## Spec
 
@@ -22,8 +22,8 @@ Repo skill: `.cursor/skills/music-videos/`. Font: Open Sans Thin from `.cursor/s
 | Frame rate | **24 fps** |
 | Length | **Always the full song** |
 | Audio | **Song only**, full volume. Ignore video audio unless the user says otherwise. |
-| Caption font | **Open Sans Thin only** |
-| Caption place | First-line **center** at **61.8% from the top**, block centered |
+| Caption font | **Open Sans Bold**, lowercase, large enough to read on a phone |
+| Caption place | Whole caption **block** centered at **61.8% from the top** |
 | Language | Original. **No translation** |
 | Render | **One song at a time**, both aspect ratios together |
 
@@ -33,7 +33,7 @@ Repo skill: `.cursor/skills/music-videos/`. Font: Open Sans Thin from `.cursor/s
 |------|------|
 | `Music Videos/source audio/` | MP3 (or wav/m4a) masters |
 | `Music Videos/source videos/` | Optional local clips (fallback) |
-| `Music Videos/config.json` | `source_videos` path — SD card / DCIM is fine, no copy |
+| `Music Videos/config.json` | `source_videos` + optional `pin_video` (reusable clip) |
 | `Music Videos/lyrics/` | Editable `.json` + `.srt` + `.txt` |
 | `Music Videos/9by19/` | Vertical outputs |
 | `Music Videos/16by9/` | Landscape outputs |
@@ -62,7 +62,17 @@ python ".cursor/skills/music-videos/scripts/make_music_video.py" --lyrics "SONG.
 python ".cursor/skills/music-videos/scripts/make_music_video.py" --render "SONG.mp3"
 ```
 
-6. `--render` refuses unless `verified` is true. After both files succeed, those source videos are written to `used.json` and will not be reused. If unused clips cannot cover the song, fail and ask for more source videos.
+6. `--render` refuses unless `verified` is true. Pinned clips stay reusable and are not written to `used.json`. Unpinned clips are marked used only after a successful dual render.
+
+Pin a long clip (and reuse it for later songs):
+
+```bash
+python ".cursor/skills/music-videos/scripts/make_music_video.py" --video "/Volumes/Untitled/DCIM/DJI_002/DJI_20260911160102_0026_D.MP4" --render "SONG.mp3"
+```
+
+Captions lagging the vocal: set `"shift": -2.0` in the lyrics JSON (seconds; negative = earlier). Pass `--shift -2.0` to write it.
+
+Art: `Gudasol Fractal Art/` is a strip behind captions at **62% opacity**, centered at 61.8% down. Scale it up and center-crop to the strip; do not stretch it. Its top and bottom edge changes every 30 seconds through 14 shapes (saw, squares, triangle, wave, scallop, wide diamond, stairs, narrow gaps, double peak, battlement, semicircle, ramp, spike, flat diamond). Shuffle that order per video so two songs do not share a sequence. Fractals + sacred geometry (skip `[11k]` PNGs) flash as 1–3s overlays every ~10–15s on commas and lyric pauses. Same center-crop for those full-frame flashes.
 
 ```bash
 python ".cursor/skills/music-videos/scripts/make_music_video.py" --status
@@ -70,8 +80,10 @@ python ".cursor/skills/music-videos/scripts/make_music_video.py" --status
 
 ## Picture
 
-Play one or more **unused** source videos **from the start, in full**, concatenated, then trim to the song. Cover-crop to fill. Never loop a used clip. Mark used **only after** a successful dual render (accepted). Source files are read in place (local folder or mounted SD card).
+If `pin_video` is set, play that clip from the start, cover-crop, trim to the song, and reuse it. Otherwise concatenate unused clips from the start. Mark unpinned clips used only after a successful dual render. Read sources in place (SD card OK).
 
 ## Captions
 
-Hardcoded Open Sans Thin, white, small black outline/shadow. First line’s vertical center is **61.8% down** the frame. Horizontal center. Timed to the verified lyrics, on the audio. No auto-translate, no extra logos.
+Hardcoded Open Sans Bold, lowercase, white, small black outline/shadow. The whole caption block is centered at **61.8% down** the frame, on one line or two. Horizontal center. Long lines wrap. Timed to the verified lyrics, on the audio. No auto-translate, no extra logos.
+
+Optional `font`, `caption_case`, `caption_look`, and `caption_place` in `Music Videos/config.json` pick from `render-styles.json`. Leave them out and the line above stays the look.

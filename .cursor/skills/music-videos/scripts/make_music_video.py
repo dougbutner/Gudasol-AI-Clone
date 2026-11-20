@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""Full-length local music videos: song audio + unused source clips + verified captions."""
+"""Full-length local music videos: song audio + unused source clips + verified captions.
+
+Optional font, caption_case, caption_look, and caption_place in Music Videos/config.json
+come from render-styles.json. Leave them out and the captions stay as they are.
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
 import math
+import random
 import re
 import shutil
 import subprocess
@@ -14,6 +19,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
+if str(ROOT / "tools") not in sys.path:
+    sys.path.insert(0, str(ROOT / "tools"))
+from render_style import resolve
+
 MV = ROOT / "Music Videos"
 SRC_VIDEO = MV / "source videos"
 SRC_AUDIO = MV / "source audio"
@@ -23,10 +32,15 @@ LYRICS = MV / "lyrics"
 WORK = MV / ".work"
 USED_PATH = MV / "used.json"
 CONFIG_PATH = MV / "config.json"
-FONT = ROOT / ".cursor" / "skills" / "telegram-gifs" / "fonts" / "OpenSans-Thin.ttf"
+FONT = ROOT / ".cursor" / "skills" / "telegram-gifs" / "fonts" / "OpenSans-Bold.ttf"
+FRACTAL_DIR = ROOT / "Gudasol Fractal Art"
+GEO_DIR = ROOT / "Gudasol Sacred Geometry Art"
 FPS = 24
 FIRST_LINE_CENTER = 0.618
-FONT_PX = 64
+FONT_PX = 92
+STRIP_H_FRAC = 0.11
+DEFAULT_SHIFT = 0.0
+PIN_CLIP = "/Volumes/Untitled/DCIM/DJI_002/DJI_20260911160102_0026_D.MP4"
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".aiff"}
 VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".mkv", ".webm"}
 
@@ -90,13 +104,14 @@ def init_folders() -> None:
                 {
                     "source_videos": str(sd if sd.is_dir() else SRC_VIDEO),
                     "recursive": True,
+                    "pin_video": PIN_CLIP if Path(PIN_CLIP).is_file() else "",
                 },
                 indent=2,
             )
             + "\n"
         )
     if not FONT.is_file():
-        sys.exit(f"Missing Open Sans Thin: {FONT}")
+        sys.exit(f"Missing Open Sans Bold: {FONT}")
 
 
 def load_config() -> dict:
@@ -125,6 +140,90 @@ def source_video_root() -> Path:
             "Mount the SD card, or set it with --source-videos /Volumes/YourCard/DCIM"
         )
     return p
+
+
+def set_pin_video(path: str | Path) -> Path:
+    p = Path(path).expanduser().resolve()
+    if not p.is_file():
+        sys.exit(f"Pinned video missing (is the SD card mounted?): {p}")
+    cfg = load_config()
+    cfg["pin_video"] = str(p)
+    CONFIG_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
+    return p
+
+
+def pinned_video() -> Path | None:
+    raw = (load_config().get("pin_video") or "").strip()
+    if not raw:
+        return None
+    p = Path(raw).expanduser()
+    if not p.is_file():
+        sys.exit(f"Pinned video missing (is the SD card mounted?): {p}")
+    return p
+
+
+def list_art(folder: Path) -> list[Path]:
+    if not folder.is_dir():
+        return []
+    pics: list[Path] = []
+    for p in sorted(folder.iterdir()):
+        if p.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
+            continue
+        if "11k" in p.name.lower():
+            continue
+        pics.append(p)
+    return pics
+
+
+def shifted_lines(lyrics: dict) -> list[dict]:
+    shift = float(lyrics.get("shift") or 0)
+    duration = float(lyrics.get("duration") or 0)
+    out: list[dict] = []
+    for line in lyrics.get("lines") or []:
+        a = float(line["start"]) + shift
+        b = float(line["end"]) + shift
+        if b <= 0.04 or a >= duration - 0.04:
+            continue
+        out.append(
+            {
+                "start": max(0.0, a),
+                "end": min(duration, max(a + 0.12, b)),
+                "text": str(line.get("text") or ""),
+            }
+        )
+    return out
+
+
+def glimpse_windows(lines: list[dict], duration: float) -> list[tuple[float, float]]:
+    """1–3s flashes on commas / pauses, spaced about 10–15s."""
+    raw: list[tuple[float, float]] = []
+    last_end = 0.0
+    for line in lines:
+        start, end = float(line["start"]), float(line["end"])
+        text = str(line.get("text") or "").rstrip()
+        gap = start - last_end
+        if gap >= 0.45 and last_end > 0.4:
+            dur = min(3.0, max(1.0, gap * 0.75))
+            t0 = last_end + max(0.0, (gap - dur) * 0.35)
+            raw.append((t0, min(duration, t0 + dur)))
+        if text.endswith(","):
+            raw.append((end, min(duration, end + 1.35)))
+        last_end = end
+    picked: list[tuple[float, float]] = []
+    for t0, t1 in sorted(raw):
+        if t1 - t0 < 0.7:
+            continue
+        if picked and t0 - picked[-1][0] < 10.0:
+            continue
+        picked.append((t0, min(t0 + 2.6, t1)))
+        if len(picked) >= 14:
+            break
+    t = 11.0
+    while t < duration - 3.0 and len(picked) < 14:
+        if all(abs(t - a) >= 12.0 for a, _ in picked):
+            picked.append((t, t + 1.8))
+        t += 13.0
+    return sorted(picked)
 
 
 def clip_id(path: Path) -> str:
@@ -377,7 +476,14 @@ def load_lyrics(song: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def pick_videos(song_dur: float) -> list[Path]:
+def pick_videos(song_dur: float, explicit: Path | None = None) -> list[Path]:
+    pin = explicit or pinned_video()
+    if pin:
+        d = probe_duration(pin)
+        print(f"  pin {pin}  {d:.1f}s  (song {song_dur:.1f}s)")
+        if d + 0.05 < song_dur:
+            sys.exit(f"Pinned clip is only {d:.1f}s, song is {song_dur:.1f}s")
+        return [pin]
     used = used_names()
     unused = [p for p in list_videos() if clip_id(p) not in used]
     root = source_video_root()
@@ -401,17 +507,39 @@ def pick_videos(song_dur: float) -> list[Path]:
 
 
 def write_ass(lines: list[dict], duration: float, w: int, h: int, dest: Path) -> None:
-    margin_v = max(8, int(round(h * FIRST_LINE_CENTER - FONT_PX * 0.5)))
+    style = resolve(load_config())
+    center = float(style["caption_place"]["center"]) if style.get("caption_place") else FIRST_LINE_CENTER
+    font_name = style.get("font_name") or "Open Sans Bold"
+    case = style.get("caption_case") or "lower"
+    look = style.get("caption_look") or {}
+    margin_v = max(8, int(round(h * center - FONT_PX * 0.5)))
+    if look.get("draw") == "chip":
+        face = (
+            f"Style: Cap,{font_name},{FONT_PX},"
+            f"&H00{look['ink'][2]:02X}{look['ink'][1]:02X}{look['ink'][0]:02X},"
+            f"&H000000FF,&H00000000,"
+            f"&H00{look['fill'][2]:02X}{look['fill'][1]:02X}{look['fill'][0]:02X},"
+            f"0,0,0,0,100,100,0,0,3,16,0,8,80,80,{margin_v},1\n\n"
+        )
+    else:
+        ink = look.get("ink") or (255, 255, 255, 255)
+        stroke = look.get("stroke") or (0, 0, 0, 255)
+        face = (
+            f"Style: Cap,{font_name},{FONT_PX},"
+            f"&H00{ink[2]:02X}{ink[1]:02X}{ink[0]:02X},&H000000FF,"
+            f"&H00{stroke[2]:02X}{stroke[1]:02X}{stroke[0]:02X},&HAA000000,"
+            f"0,0,0,0,100,100,0,0,1,{int(look.get('stroke_px') or 3)},2,8,80,80,{margin_v},1\n\n"
+        )
     events = [
         "[Script Info]\n",
         "ScriptType: v4.00+\n",
         f"PlayResX: {w}\n",
         f"PlayResY: {h}\n",
-        "WrapStyle: 2\n",
+        "WrapStyle: 0\n",
         "ScaledBorderAndShadow: yes\n\n",
         "[V4+ Styles]\n",
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n",
-        f"Style: Cap,Open Sans,{FONT_PX},&H00FFFFFF,&H000000FF,&H00000000,&HAA000000,0,0,0,0,100,100,0,0,1,3,2,8,80,80,{margin_v},1\n\n",
+        face,
         "[Events]\n",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n",
     ]
@@ -421,11 +549,44 @@ def write_ass(lines: list[dict], duration: float, w: int, h: int, dest: Path) ->
         if b <= 0.05 or a >= duration - 0.04:
             continue
         text = " ".join(str(line.get("text") or "").split())
+        if case == "upper":
+            text = text.upper()
+        elif case != "as-spoken":
+            text = text.lower()
         text = text.replace("\\", "\\\\").replace("{", "(").replace("}", ")")
         if not text:
             continue
-        events.append(f"Dialogue: 0,{ass_time(a)},{ass_time(b)},Cap,,0,0,0,,{text}\n")
+        events.append(
+            f"Dialogue: 0,{ass_time(a)},{ass_time(b)},Cap,,0,0,0,,"
+            f"{{\\an5\\pos({w // 2},{int(round(h * center))})}}{text}\n"
+        )
     dest.write_text("".join(events), encoding="utf-8")
+
+
+def edge_cut(seed: str, depth: int) -> str:
+    """Inset from the strip edge. Shape order is shuffled per video."""
+    shapes = [
+        f"abs(mod(X\\,72)-36)/36*{depth}",
+        f"if(lt(mod(X\\,72)\\,36)\\,{depth}\\,0)",
+        f"abs(X-W/2)/(W/2)*{depth}",
+        f"(sin(X*PI/80)*0.5+0.5)*{depth}",
+        f"pow(sin(X*PI/28)*0.5+0.5\\,2)*{depth}",
+        f"abs(mod(X\\,140)-70)/70*{depth}",
+        f"floor(mod(X\\,80)/20)*{depth}/4",
+        f"if(lt(mod(X\\,40)\\,12)\\,{depth}\\,0)",
+        f"abs(sin(X*PI/36))*{depth}",
+        f"if(lt(mod(X\\,90)\\,60)\\,0\\,{depth})",
+        f"(1-sqrt(max(1-pow((mod(X\\,64)-32)/32\\,2)\\,0)))*{depth}",
+        f"mod(X\\,70)/70*{depth}",
+        f"pow(abs(mod(X\\,56)-28)/28\\,3)*{depth}",
+        f"min(abs(mod(X\\,110)-55)/55*{depth}\\,{depth}*0.65)",
+    ]
+    order = list(range(len(shapes)))
+    random.Random(seed).shuffle(order)
+    cut = shapes[order[-1]]
+    for slot in range(len(shapes) - 1, -1, -1):
+        cut = f"if(eq(floor(mod(T/30\\,{len(shapes)}))\\,{slot})\\,{shapes[order[slot]]}\\,{cut})"
+    return cut.replace("X", f"(X+{random.Random(seed + '-x').randrange(8, 80)})")
 
 
 def ffmpeg_escape(path: Path) -> str:
@@ -443,27 +604,84 @@ def render_aspect(
     ffmpeg = find_ffmpeg()
     duration = float(lyrics["duration"])
     dest.parent.mkdir(parents=True, exist_ok=True)
+    lines = shifted_lines(lyrics)
     ass = WORK / f"{slug(song.name)}-{kind}.ass"
-    write_ass(lyrics.get("lines") or [], duration, w, h, ass)
-    fontsdir = ffmpeg_escape(FONT.parent)
+    write_ass(lines, duration, w, h, ass)
+    style = resolve(load_config())
+    if style.get("font_path"):
+        font_dir = WORK / "font"
+        font_dir.mkdir(parents=True, exist_ok=True)
+        chosen = font_dir / Path(style["font_path"]).name
+        if not chosen.is_file() or chosen.stat().st_size != Path(style["font_path"]).stat().st_size:
+            shutil.copyfile(style["font_path"], chosen)
+        fontsdir = ffmpeg_escape(font_dir)
+    else:
+        fontsdir = ffmpeg_escape(FONT.parent)
     ass_esc = ffmpeg_escape(ass)
+    fractals = list_art(FRACTAL_DIR)
+    geos = list_art(GEO_DIR)
+    mix = geos + fractals
+    windows = glimpse_windows(lines, duration)
+    glimpses = [mix[i % len(mix)] for i in range(len(windows))] if mix and windows else []
+    strip = fractals[0] if fractals else None
+    center = float(style["caption_place"]["center"]) if style.get("caption_place") else FIRST_LINE_CENTER
+    strip_h = max(int(round(h * STRIP_H_FRAC)), int(round(FONT_PX * 3.2)))
+    strip_y = max(0, int(round(h * center - strip_h / 2)))
     cmd: list[str] = [ffmpeg, "-nostdin", "-y"]
     for v in videos:
-        cmd += ["-i", str(v)]
+        cmd += ["-t", f"{duration:.3f}", "-i", str(v)]
+    for img, (t0, t1) in zip(glimpses, windows):
+        cmd += [
+            "-loop", "1",
+            "-framerate", str(FPS),
+            "-t", f"{max(1.0, t1 - t0) + 0.2:.3f}",
+            "-i",
+            str(img),
+        ]
+    if strip:
+        cmd += ["-loop", "1", "-framerate", "1", "-t", f"{duration:.3f}", "-i", str(strip)]
     cmd += ["-i", str(song)]
     n = len(videos)
+    g0 = n
+    strip_i = n + len(glimpses)
+    audio_i = strip_i + (1 if strip else 0)
     parts = []
     for i in range(n):
         parts.append(
             f"[{i}:v]scale={w}:{h}:force_original_aspect_ratio=increase,"
-            f"crop={w}:{h},fps={FPS},setsar=1,format=yuv420p[v{i}]"
+            f"crop={w}:{h}:(iw-{w})/2:(ih-{h})/2,fps={FPS},setsar=1,format=yuv420p[v{i}]"
         )
     parts.append("".join(f"[v{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[vcat]")
-    parts.append(f"[vcat]subtitles='{ass_esc}':fontsdir='{fontsdir}'[vout]")
+    prev = "vcat"
+    for i, (t0, t1) in enumerate(windows):
+        if i >= len(glimpses):
+            break
+        idx = g0 + i
+        alpha = 0.38 if i % 2 == 0 else 0.48
+        parts.append(
+            f"[{idx}:v]scale={w}:{h}:force_original_aspect_ratio=increase,"
+            f"crop={w}:{h}:(iw-{w})/2:(ih-{h})/2,format=rgba,colorchannelmixer=aa={alpha:.2f},"
+            f"setpts=PTS-STARTPTS+{t0:.3f}/TB[g{i}]"
+        )
+        nxt = f"o{i}"
+        parts.append(
+            f"[{prev}][g{i}]overlay=0:0:eof_action=pass:enable='between(t,{t0:.3f},{t1:.3f})'[{nxt}]"
+        )
+        prev = nxt
+    if strip:
+        cut = edge_cut(f"{slug(song.name)}-{kind}", 48)
+        parts.append(
+            f"[{strip_i}:v]fps={FPS},scale={w}:{strip_h}:force_original_aspect_ratio=increase,"
+            f"crop={w}:{strip_h}:(iw-{w})/2:(ih-{strip_h})/2,format=rgba,"
+            f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(Y\\,{cut})+gt(Y\\,H-1-{cut})\\,0\\,158)'[strip]"
+        )
+        parts.append(f"[{prev}][strip]overlay=0:{strip_y}[banded]")
+        prev = "banded"
+    parts.append(f"[{prev}]subtitles='{ass_esc}':fontsdir='{fontsdir}'[vout]")
     cmd += [
         "-filter_complex", ";".join(parts),
         "-map", "[vout]",
-        "-map", f"{n}:a:0",
+        "-map", f"{audio_i}:a:0",
         "-t", f"{duration:.3f}",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
         "-r", str(FPS),
@@ -472,10 +690,10 @@ def render_aspect(
         "-movflags", "+faststart",
         str(dest),
     ]
-    print(f"  render {kind} {w}x{h} → {dest.relative_to(MV)}")
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    print(f"  render {kind} {w}x{h} → {dest.relative_to(MV)}  glimpses={len(windows)}", flush=True)
+    proc = subprocess.run(cmd)
     if proc.returncode != 0:
-        sys.exit(f"ffmpeg failed ({kind}):\n{proc.stderr[-2500:]}")
+        sys.exit(f"ffmpeg failed ({kind})")
 
 
 def cmd_lyrics(song_name: str) -> None:
@@ -493,7 +711,7 @@ def cmd_lyrics(song_name: str) -> None:
     print("Do not translate. Keep original language, on-beat with the song.")
 
 
-def cmd_render(song_name: str) -> None:
+def cmd_render(song_name: str, video: str | None = None, shift: float | None = None) -> None:
     init_folders()
     song = resolve_song(song_name)
     lyrics = load_lyrics(song)
@@ -506,7 +724,17 @@ def cmd_render(song_name: str) -> None:
         sys.exit("translate must stay false — original language only.")
     song_dur = probe_duration(song)
     lyrics["duration"] = song_dur
-    videos = pick_videos(song_dur)
+    if shift is not None:
+        lyrics["shift"] = float(shift)
+        paths = lyrics_paths(song)
+        paths["json"].write_text(json.dumps(lyrics, indent=2) + "\n", encoding="utf-8")
+    elif "shift" not in lyrics:
+        lyrics["shift"] = DEFAULT_SHIFT
+        paths = lyrics_paths(song)
+        paths["json"].write_text(json.dumps(lyrics, indent=2) + "\n", encoding="utf-8")
+    explicit = set_pin_video(video) if video else None
+    videos = pick_videos(song_dur, explicit)
+    pin = pinned_video()
     stem = slug(song.name)
     dest_a = OUT_916 / f"{stem}.mp4"
     dest_b = OUT_169 / f"{stem}.mp4"
@@ -518,17 +746,19 @@ def cmd_render(song_name: str) -> None:
         dest_a.unlink(missing_ok=True)
         dest_b.unlink(missing_ok=True)
         sys.exit(f"Output shorter than song ({da:.1f}s / {db:.1f}s vs {song_dur:.1f}s). Nothing marked used.")
-    data = load_used()
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    for v in videos:
-        data.setdefault("used_videos", []).append(
-            {"file": clip_id(v), "song": song.name, "at": now}
-        )
-    save_used(data)
+    if not pin:
+        data = load_used()
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for v in videos:
+            data.setdefault("used_videos", []).append(
+                {"file": clip_id(v), "song": song.name, "at": now}
+            )
+        save_used(data)
     print(f"\naccepted {song.name}")
     print(f"  9by19 {dest_a}  {da:.1f}s")
     print(f"  16by9 {dest_b}  {db:.1f}s")
-    print(f"  used {', '.join(clip_id(v) for v in videos)}")
+    print(f"  picture {', '.join(clip_id(v) for v in videos)}" + ("  (pinned, reusable)" if pin else ""))
+    print(f"  caption shift {float(lyrics.get('shift') or 0):+.2f}s")
 
 
 def cmd_status() -> None:
@@ -564,14 +794,18 @@ def main() -> None:
         help="Read clips in place (SD card OK). Saved in Music Videos/config.json",
     )
     p.add_argument("--status", action="store_true")
+    p.add_argument("--video", metavar="PATH", help="Pin a source clip for this and later songs (reusable)")
+    p.add_argument("--shift", type=float, help="Seconds to move captions (negative = earlier)")
     args = p.parse_args()
     if args.source_videos:
         set_source_videos(args.source_videos)
+    if args.video:
+        set_pin_video(args.video)
     if args.lyrics:
         cmd_lyrics(args.lyrics)
         return
     if args.render:
-        cmd_render(args.render)
+        cmd_render(args.render, video=args.video, shift=args.shift)
         return
     if args.status:
         cmd_status()
