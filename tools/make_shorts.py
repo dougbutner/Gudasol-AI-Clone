@@ -498,22 +498,118 @@ def subject_crop_x(frame_path: Path, src_w: int, src_h: int) -> int:
     return max(0, min(int(src_w - crop_w), x))
 
 
+MAIN_BOTTOM_TOP = 840
+MAIN_BOTTOM_SPEAKER = 1080
+CUTAWAY_BAND = 640
+
+
 @dataclass
 class FramingPlan:
     mode: str
     reason: str
     crop_keys: list[tuple[float, int]] = field(default_factory=list)
     art: Path | None = None
+    support: Path | None = None
+    cutaways: list[tuple[float, float]] = field(default_factory=list)
     stats: dict = field(default_factory=dict)
 
     def summary(self) -> str:
         extra = ""
         if self.art:
             extra = f" art={self.art.name}"
+        if self.support:
+            extra += f" support={self.support.name}"
+        if self.cutaways:
+            extra += f" cutaways={len(self.cutaways)}"
         hit = self.stats.get("hit_rate")
         if hit is not None:
             extra += f" hit={hit}"
         return f"{self.mode} ({self.reason}){extra}"
+
+
+def video_encoder() -> list[str]:
+    try:
+        out = subprocess.check_output(
+            ["ffmpeg", "-hide_banner", "-encoders"],
+            text=True,
+            stderr=subprocess.STDOUT,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
+    if "h264_videotoolbox" in out:
+        return ["-c:v", "h264_videotoolbox", "-b:v", "8M"]
+    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
+
+
+def prepare_support_still(src: Path, dest: Path, band_h: int) -> None:
+    im = Image.open(src).convert("RGB")
+    scale = max(W / im.width, band_h / im.height)
+    nw, nh = max(W, int(im.width * scale)), max(band_h, int(im.height * scale))
+    im = im.resize((nw, nh), Image.Resampling.LANCZOS)
+    left = max(0, (nw - W) // 2)
+    top = max(0, (nh - band_h) // 2)
+    im = im.crop((left, top, left + W, top + band_h))
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    im.save(dest, quality=92)
+
+
+def cutaway_spans(words: list[dict], start: float, end: float, max_spans: int = 2) -> list[tuple[float, float]]:
+    """Return up to two pause windows relative to clip start. Never in the first 2 seconds."""
+    timed = sorted(
+        (float(w["start"]), float(w["end"]))
+        for w in words
+        if float(w["end"]) > start and float(w["start"]) < end
+    )
+    if not timed:
+        return []
+    gaps: list[tuple[float, float]] = []
+    prev_end = start
+    for a, b in timed:
+        if a - prev_end >= BREATH_PAUSE and a - start >= 2.0:
+            gaps.append((prev_end, a))
+        prev_end = max(prev_end, b)
+    spans: list[tuple[float, float]] = []
+    for a, b in gaps:
+        mid = (a + b) / 2
+        left = max(2.0, mid - 2.0)
+        right = min(end - start, left + 4.0)
+        left = max(2.0, right - 4.0)
+        if right - left < 3.0:
+            continue
+        spans.append((left, right))
+        if len(spans) >= max_spans:
+            break
+    return spans
+
+
+def audio_stream_count(path: Path) -> int:
+    out = subprocess.check_output(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "a",
+            "-show_entries", "stream=index", "-of", "csv=p=0", str(path),
+        ],
+        text=True,
+    ).strip()
+    return len([line for line in out.splitlines() if line.strip()])
+
+
+def extract_qa_frames(video: Path, dest_dir: Path) -> list[Path]:
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dur = probe_duration(video)
+    stamps = [1.0, max(1.0, dur / 2), max(1.0, dur - 1.0)]
+    frames: list[Path] = []
+    for i, t in enumerate(stamps):
+        frame = dest_dir / f"qa-{i + 1}.jpg"
+        run(
+            [
+                "ffmpeg", "-y", "-ss", f"{min(t, max(0.0, dur - 0.05)):.3f}",
+                "-i", str(video), "-frames:v", "1", str(frame),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        frames.append(frame)
+    return frames
 
 
 def list_art() -> list[Path]:
@@ -1111,6 +1207,46 @@ def build_caption_mov(cues: list[dict], start: float, duration: float, work: Pat
     return mov
 
 
+def _support_is_still(path: Path) -> bool:
+    return path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}
+
+
+def _support_inputs(support: Path, duration: float, band_h: int, work: Path) -> tuple[list[str], str]:
+    """Return ffmpeg input args and a filter that produces a [support] band of W x band_h."""
+    if _support_is_still(support):
+        still = work / "support-band.jpg"
+        prepare_support_still(support, still, band_h)
+        return (
+            ["-loop", "1", "-t", f"{duration:.3f}", "-i", str(still)],
+            f"[1:v]scale={W}:{band_h}:flags=lanczos,setsar=1[support]",
+        )
+    return (
+        ["-ss", "0", "-t", f"{duration:.3f}", "-i", str(support)],
+        (
+            f"[1:v]scale={W}:{band_h}:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"crop={W}:{band_h},setsar=1[support]"
+        ),
+    )
+
+
+def _face_crop_filter(video: Path, start: float, duration: float, src_w: int, src_h: int, plan: FramingPlan, work: Path, out_h: int) -> str:
+    scaled_w = int(src_w * out_h / src_h)
+    if scaled_w % 2:
+        scaled_w -= 1
+    if plan.crop_keys:
+        x0 = int(round(plan.crop_keys[0][1] * out_h / src_h))
+    else:
+        x0 = int((scaled_w - W) / 2)
+    x0 = max(0, min(max(0, scaled_w - W), x0))
+    if x0 % 2:
+        x0 -= 1
+    if plan.crop_keys and out_h == H:
+        cmd_file = work / "crop.txt"
+        write_crop_sendcmd(plan.crop_keys, src_h, cmd_file)
+        return f"[0:v]scale={scaled_w}:{out_h}:flags=lanczos,setsar=1,sendcmd=f={cmd_file.name},crop={W}:{out_h}:{x0}:0[speaker]"
+    return f"[0:v]scale={scaled_w}:{out_h}:flags=lanczos,setsar=1,crop={W}:{out_h}:{x0}:0[speaker]"
+
+
 def render_short(video: Path, start: float, end: float, cues: list[dict], plan: FramingPlan, work: Path, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     src_w, src_h = probe_wh(video)
@@ -1125,60 +1261,92 @@ def render_short(video: Path, start: float, end: float, cues: list[dict], plan: 
     if logo_file:
         prepare_logo(logo_file, logo)
     cap_mov = build_caption_mov(cues, start, duration, work)
+    enc = video_encoder()
+    next_idx = 1
+    inputs = ["-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", str(video)]
+    filters: list[str] = []
 
-    if plan.mode == "letterbox":
+    if plan.mode == "main-bottom":
+        support = plan.support or plan.art or pick_art(f"{video.stem}-support") or pick_logo()
+        if support is None:
+            raise FileNotFoundError("main-bottom needs a support still or video")
+        support_args, support_filter = _support_inputs(support, duration, MAIN_BOTTOM_TOP, work)
+        inputs += support_args
+        next_idx = 2
+        filters.append(support_filter)
+        full_plan = FramingPlan(
+            "track",
+            plan.reason,
+            crop_keys=plan.crop_keys,
+            stats=plan.stats,
+        )
+        if not full_plan.crop_keys:
+            tracked = plan_framing(video, start, end, src_w, src_h, work / "mb-faces", seed=f"{video.stem}-mb")
+            if tracked.crop_keys:
+                full_plan.crop_keys = tracked.crop_keys
+        # Speaker pane is 1080 tall so the face stays in the lower half of the short.
+        filters.append(
+            _face_crop_filter(
+                video, start, duration, src_w, src_h, full_plan, work, MAIN_BOTTOM_SPEAKER
+            )
+        )
+        filters.append("[support][speaker]vstack=inputs=2[base]")
+        last = "base"
+    elif plan.mode == "letterbox":
         art_src = plan.art or pick_art(video.stem) or pick_logo()
         art_png = work / "art.jpg"
         prepare_art_bg(art_src, art_png)
         vid_h = int(round(W * src_h / src_w))
         if vid_h % 2:
             vid_h -= 1
-        inputs = [
-            "-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", str(video),
-            "-i", str(art_png),
-        ]
-        if logo_file:
-            inputs += ["-i", str(logo)]
+        inputs += ["-i", str(art_png)]
+        next_idx = 2
         filters = [
             f"[0:v]scale={W}:{vid_h}:flags=lanczos,setsar=1[vid]",
             f"[1:v]scale={W}:{H}:flags=lanczos,setsar=1[bg]",
             "[bg][vid]overlay=(W-w)/2:(H-h)/2[base]",
         ]
         last = "base"
-        if logo_file:
-            filters.append("[base][2:v]overlay=W-w-36:36[logoed]")
-            last = "logoed"
-        cap_idx = 3 if logo_file else 2
     else:
-        scaled_w = int(src_w * H / src_h)
-        if scaled_w % 2:
-            scaled_w -= 1
-        if plan.crop_keys:
-            x0 = int(round(plan.crop_keys[0][1] * H / src_h))
-        else:
-            x0 = int((scaled_w - W) / 2)
-        x0 = max(0, min(max(0, scaled_w - W), x0))
-        if x0 % 2:
-            x0 -= 1
-        cmd_file = work / "crop.txt"
-        if plan.crop_keys:
-            write_crop_sendcmd(plan.crop_keys, src_h, cmd_file)
-            crop = f"sendcmd=f={cmd_file.name},crop={W}:{H}:{x0}:0"
-        else:
-            crop = f"crop={W}:{H}:{x0}:0"
-        inputs = ["-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", str(video)]
-        if logo_file:
-            inputs += ["-i", str(logo)]
-        filters = [f"[0:v]scale={scaled_w}:{H}:flags=lanczos,setsar=1,{crop}[base]"]
+        # full / track / jump / cutaway base
+        use_plan = plan
+        if plan.mode == "cutaway" and not plan.crop_keys:
+            tracked = plan_framing(video, start, end, src_w, src_h, work / "cut-faces", seed=f"{video.stem}-cut")
+            use_plan = FramingPlan(
+                tracked.mode if tracked.mode in {"track", "jump"} else "track",
+                tracked.reason,
+                crop_keys=tracked.crop_keys,
+                support=plan.support,
+                cutaways=plan.cutaways,
+                art=plan.art,
+                stats=tracked.stats,
+            )
+        filters.append(_face_crop_filter(video, start, duration, src_w, src_h, use_plan, work, H).replace("[speaker]", "[base]"))
         last = "base"
-        if logo_file:
-            filters.append("[base][1:v]overlay=W-w-36:36[logoed]")
-            last = "logoed"
-        cap_idx = 2 if logo_file else 1
+        if plan.mode == "cutaway":
+            support = plan.support or plan.art or pick_art(f"{video.stem}-cutaway") or pick_logo()
+            if support is None:
+                raise FileNotFoundError("cutaway needs a support still or video")
+            support_args, support_filter = _support_inputs(support, duration, CUTAWAY_BAND, work)
+            inputs += support_args
+            next_idx = 2
+            filters.append(support_filter.replace("[support]", "[band]"))
+            spans = plan.cutaways or []
+            if spans:
+                enable = "+".join(f"between(t\\,{a:.3f}\\,{b:.3f})" for a, b in spans)
+                filters.append(f"[{last}][band]overlay=0:0:enable='{enable}'[cut]")
+                last = "cut"
+
+    if logo_file:
+        inputs += ["-i", str(logo)]
+        logo_idx = next_idx
+        next_idx += 1
+        filters.append(f"[{last}][{logo_idx}:v]overlay=W-w-36:36[logoed]")
+        last = "logoed"
 
     if cap_mov:
         inputs += ["-i", str(cap_mov)]
-        filters.append(f"[{cap_idx}:v]format=rgba[cc]")
+        filters.append(f"[{next_idx}:v]format=rgba[cc]")
         filters.append(f"[{last}][cc]overlay=0:0[vout]")
     else:
         filters.append(f"[{last}]copy[vout]")
@@ -1186,12 +1354,57 @@ def render_short(video: Path, start: float, end: float, cues: list[dict], plan: 
         "ffmpeg", "-y", *inputs,
         "-filter_complex", ";".join(filters),
         "-map", "[vout]", "-map", "0:a?",
-        "-c:v", "h264_videotoolbox", "-b:v", "8M", "-pix_fmt", "yuv420p",
+        *enc, "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "128k",
         "-t", f"{duration:.3f}",
         "-movflags", "+faststart", str(dest),
     ]
     run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, cwd=str(work))
+
+
+def render_layout_short(
+    video: Path,
+    start: float,
+    end: float,
+    cues: list[dict],
+    layout: str,
+    work: Path,
+    dest: Path,
+    support: Path | None = None,
+    words: list[dict] | None = None,
+) -> FramingPlan:
+    """Render one short with layout full | main-bottom | cutaway. Main audio only."""
+    src_w, src_h = probe_wh(video)
+    if layout == "main-bottom":
+        tracked = plan_framing(video, start, end, src_w, src_h, work / "faces", seed=f"{video.stem}-mb")
+        plan = FramingPlan(
+            "main-bottom",
+            tracked.reason,
+            crop_keys=tracked.crop_keys if tracked.mode in {"track", "jump"} else [],
+            support=support or pick_art(f"{video.stem}-mb"),
+            stats=tracked.stats,
+        )
+    elif layout == "cutaway":
+        tracked = plan_framing(video, start, end, src_w, src_h, work / "faces", seed=f"{video.stem}-cut")
+        spans = cutaway_spans(words or [], start, end) if words else []
+        plan = FramingPlan(
+            "cutaway",
+            tracked.reason,
+            crop_keys=tracked.crop_keys if tracked.mode in {"track", "jump"} else [],
+            support=support or pick_art(f"{video.stem}-cut"),
+            cutaways=spans,
+            stats=tracked.stats,
+        )
+    else:
+        if STYLE.get("frame") == "letterbox":
+            plan = FramingPlan("letterbox", "style", art=pick_art(f"{video.stem}-full"))
+        elif STYLE.get("frame") == "center-crop":
+            crop_w = src_h * 9 / 16
+            plan = FramingPlan("track", "style-center", crop_keys=[(0.0, max(0, int((src_w - crop_w) / 2)))])
+        else:
+            plan = plan_framing(video, start, end, src_w, src_h, work / "faces", seed=f"{video.stem}-full")
+    render_short(video, start, end, cues, plan, work, dest)
+    return plan
 
 
 def slug(name: str) -> str:

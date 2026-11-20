@@ -1,0 +1,85 @@
+name: CEO loop
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ceo
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  ceo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install faster-whisper yt-dlp certifi pillow
+
+      - name: Write YouTube secrets
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: |
+          {
+            echo "YOUTUBE_CLIENT_ID=${YOUTUBE_CLIENT_ID}"
+            echo "YOUTUBE_CLIENT_SECRET=${YOUTUBE_CLIENT_SECRET}"
+            echo "YOUTUBE_REFRESH_TOKEN=${YOUTUBE_REFRESH_TOKEN}"
+          } > .env
+
+      - name: Run CEO
+        run: python tools/ceo.py run
+
+      - name: Stage awaiting short artifact
+        if: always()
+        run: |
+          mkdir -p data/artifact
+          if [ -f data/awaiting-short.txt ]; then
+            cp data/awaiting-short.txt data/artifact/
+            path="$(sed -n '2p' data/awaiting-short.txt)"
+            if [ -n "$path" ] && [ -f "$path" ]; then
+              cp "$path" data/artifact/
+            fi
+          fi
+
+      - name: Upload awaiting short
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: awaiting-short
+          path: data/artifact/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Commit store
+        if: always()
+        run: |
+          git config user.name "ceo-bot"
+          git config user.email "ceo-bot@users.noreply.github.com"
+          git add data/ceo.sqlite data/ceo-status.md || true
+          git add "Aquarius Academy/search-terms.md" || true
+          if git diff --cached --quiet; then
+            echo "no store changes"
+          else
+            git commit -m "ceo: update store and status"
+            git push
+          fi
