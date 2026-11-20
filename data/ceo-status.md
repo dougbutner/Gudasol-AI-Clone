@@ -1,8 +1,8 @@
 # CEO status
 
-Updated: 2026-11-20T08:05:40+00:00
+Updated: 2026-11-20T19:44:30+00:00
 
-Aquarius Academy: layout=full; short=1; posted=False; reads=0; auth=blocked; next=full; no stats yet
+Aquarius Academy: no source available this run (auth=blocked).
 
 ## Recent posts
 
@@ -14,4 +14,5 @@ None yet.
 
 ## Last decisions
 
+- 2026-11-20T19:44:28+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
 - 2026-11-20T08:02:41+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
