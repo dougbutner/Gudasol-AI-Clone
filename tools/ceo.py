@@ -2,10 +2,13 @@
 """CEO loop: scout, cut one short, post at most one YouTube video, learn from reads.
 
   python3 tools/ceo.py run
+  python3 tools/ceo.py run --project "Aquarius Academy"
   python3 tools/ceo.py status
   python3 tools/ceo.py approve <short_id>
 
-Memory lives in data/ceo.sqlite (committed). Video files stay gitignored.
+Each niche folder has its own .env (YouTube channel). Shared keys may live in
+the repo-root .env. Memory lives in data/ceo.sqlite and tracks many projects
+and channels. Video files stay gitignored.
 """
 
 from __future__ import annotations
@@ -45,6 +48,15 @@ DB_PATH = DATA / "ceo.sqlite"
 STATUS_PATH = DATA / "ceo-status.md"
 LAYOUTS = ("full", "main-bottom", "cutaway")
 HOST = "gha" if os.environ.get("GITHUB_ACTIONS") == "true" else "local"
+YOUTUBE_ENV_KEYS = (
+    "YOUTUBE_ACCESS_TOKEN",
+    "YOUTUBE_REFRESH_TOKEN",
+    "YOUTUBE_CLIENT_ID",
+    "YOUTUBE_CLIENT_SECRET",
+    "YOUTUBE_TITLE_PREFIX",
+    "YOUTUBE_TAGS",
+    "YOUTUBE_DISCLAIMER",
+)
 
 
 def utc_now() -> str:
@@ -61,6 +73,63 @@ def https_ctx() -> ssl.SSLContext:
     return ssl.create_default_context(cafile=certifi.where() if certifi else None)
 
 
+def read_env_file(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    out: dict[str, str] = {}
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        out[key.strip()] = value.strip().strip("'").strip('"')
+    return out
+
+
+def load_project_env(niche: Path) -> None:
+    """Root .env for shared keys; niche/.env wins for YouTube and project overrides."""
+    for key in YOUTUBE_ENV_KEYS:
+        os.environ.pop(key, None)
+    root_vars = read_env_file(ROOT / ".env")
+    niche_vars = read_env_file(niche / ".env")
+    for key, value in root_vars.items():
+        if key in YOUTUBE_ENV_KEYS:
+            os.environ[key] = value
+        else:
+            os.environ.setdefault(key, value)
+    for key, value in niche_vars.items():
+        os.environ[key] = value
+
+
+def _table_cols(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def migrate(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS projects (
+            slug TEXT PRIMARY KEY,
+            path TEXT NOT NULL,
+            channel_id TEXT,
+            channel_title TEXT,
+            updated_at TEXT NOT NULL
+        );
+        """
+    )
+    post_cols = _table_cols(conn, "posts")
+    if "channel_id" not in post_cols:
+        conn.execute("ALTER TABLE posts ADD COLUMN channel_id TEXT")
+    if "channel_title" not in post_cols:
+        conn.execute("ALTER TABLE posts ADD COLUMN channel_title TEXT")
+    run_cols = _table_cols(conn, "runs")
+    if "channel_id" not in run_cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN channel_id TEXT")
+    if "channel_title" not in run_cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN channel_title TEXT")
+    conn.commit()
+
+
 def connect() -> sqlite3.Connection:
     DATA.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
@@ -68,6 +137,13 @@ def connect() -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(
         """
+        CREATE TABLE IF NOT EXISTS projects (
+            slug TEXT PRIMARY KEY,
+            path TEXT NOT NULL,
+            channel_id TEXT,
+            channel_title TEXT,
+            updated_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS sources (
             id INTEGER PRIMARY KEY,
             niche TEXT NOT NULL,
@@ -101,6 +177,8 @@ def connect() -> sqlite3.Connection:
             url TEXT,
             caption TEXT,
             posted_at TEXT NOT NULL,
+            channel_id TEXT,
+            channel_title TEXT,
             UNIQUE(short_id, platform)
         );
         CREATE TABLE IF NOT EXISTS reads (
@@ -120,7 +198,9 @@ def connect() -> sqlite3.Connection:
             host TEXT NOT NULL,
             niche TEXT,
             auth TEXT,
-            summary TEXT
+            summary TEXT,
+            channel_id TEXT,
+            channel_title TEXT
         );
         CREATE TABLE IF NOT EXISTS decisions (
             id INTEGER PRIMARY KEY,
@@ -145,6 +225,7 @@ def connect() -> sqlite3.Connection:
         );
         """
     )
+    migrate(conn)
     conn.commit()
     return conn
 
@@ -157,7 +238,20 @@ def niche_dirs() -> list[Path]:
     return found
 
 
-def pick_niche(conn: sqlite3.Connection) -> Path | None:
+def resolve_niche(name: str | None) -> Path | None:
+    if not name:
+        return None
+    path = Path(name)
+    if not path.is_absolute():
+        path = ROOT / name
+    if path.is_dir() and (path / "config.json").is_file() and (path / "search-terms.md").is_file():
+        return path
+    return None
+
+
+def pick_niche(conn: sqlite3.Connection, forced: str | None = None) -> Path | None:
+    if forced:
+        return resolve_niche(forced)
     niches = niche_dirs()
     if not niches:
         return None
@@ -166,6 +260,43 @@ def pick_niche(conn: sqlite3.Connection) -> Path | None:
         latest[row["niche"]] = row["t"]
     niches.sort(key=lambda p: (latest.get(p.name) or "", p.name))
     return niches[0]
+
+
+def upsert_project(
+    conn: sqlite3.Connection,
+    niche: Path,
+    channel_id: str | None = None,
+    channel_title: str | None = None,
+) -> None:
+    abs_niche = niche if niche.is_absolute() else (ROOT / niche)
+    try:
+        rel = str(abs_niche.resolve().relative_to(ROOT.resolve()))
+    except ValueError:
+        rel = niche.name
+    row = conn.execute("SELECT channel_id, channel_title FROM projects WHERE slug = ?", (abs_niche.name,)).fetchone()
+    keep_id = channel_id or (row["channel_id"] if row else None)
+    keep_title = channel_title or (row["channel_title"] if row else None)
+    conn.execute(
+        """
+        INSERT INTO projects (slug, path, channel_id, channel_title, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(slug) DO UPDATE SET
+            path = excluded.path,
+            channel_id = COALESCE(excluded.channel_id, projects.channel_id),
+            channel_title = COALESCE(excluded.channel_title, projects.channel_title),
+            updated_at = excluded.updated_at
+        """,
+        (abs_niche.name, rel, keep_id, keep_title, utc_now()),
+    )
+    conn.commit()
+
+
+def fetch_channel(token: str) -> tuple[str | None, str | None]:
+    data = youtube_get(token, "channels", {"part": "snippet,id", "mine": "true"})
+    if not data or not data.get("items"):
+        return None, None
+    item = data["items"][0]
+    return str(item.get("id") or "") or None, str((item.get("snippet") or {}).get("title") or "") or None
 
 
 def parse_terms(path: Path) -> dict[str, Any]:
@@ -206,9 +337,9 @@ def on_lane_match(title: str, description: str, words: list[str]) -> bool:
     return any(w and w.lower() in blob for w in words)
 
 
-def youtube_refresh() -> tuple[str, str]:
-    """Return (access_token, auth_status). auth_status is ok or blocked."""
-    share.load_env(share.ENV_PATH)
+def youtube_refresh(niche: Path) -> tuple[str, str]:
+    """Return (access_token, auth_status) using that niche's .env. auth is ok or blocked."""
+    load_project_env(niche)
     client_id = os.environ.get("YOUTUBE_CLIENT_ID", "").strip()
     client_secret = os.environ.get("YOUTUBE_CLIENT_SECRET", "").strip()
     refresh = os.environ.get("YOUTUBE_REFRESH_TOKEN", "").strip()
@@ -765,7 +896,21 @@ def cut_one(
     return int(cur.lastrowid)
 
 
-def caption_for(conn: sqlite3.Connection, short_id: int) -> tuple[str, str]:
+def niche_for_short(conn: sqlite3.Connection, short_id: int) -> Path | None:
+    row = conn.execute(
+        """
+        SELECT src.niche FROM shorts s
+        JOIN sources src ON src.id = s.source_id
+        WHERE s.id = ?
+        """,
+        (short_id,),
+    ).fetchone()
+    if not row:
+        return None
+    return resolve_niche(row["niche"])
+
+
+def caption_for(conn: sqlite3.Connection, short_id: int) -> tuple[str, str, list[str]]:
     row = conn.execute(
         """
         SELECT s.*, src.title, src.youtube_id, src.niche
@@ -774,17 +919,30 @@ def caption_for(conn: sqlite3.Connection, short_id: int) -> tuple[str, str]:
         """,
         (short_id,),
     ).fetchone()
-    title = (row["title"] or row["youtube_id"] or "clip")[:80]
-    title = f"Gudasol AI | {title}" if "Gudasol AI" not in title else title
+    base = (row["title"] or row["youtube_id"] or "clip")[:80]
+    prefix = os.environ.get("YOUTUBE_TITLE_PREFIX", "").strip()
+    if prefix and prefix not in base:
+        title = f"{prefix} {base}".strip()
+    else:
+        title = base
+    disclaimer = os.environ.get("YOUTUBE_DISCLAIMER", "").strip() or share.DEFAULT_DISCLAIMER
     description = (
         f"{row['niche']} short · layout {row['layout']}\n\n"
         f"Source: https://www.youtube.com/watch?v={row['youtube_id']}\n\n"
-        f"{share.DEFAULT_DISCLAIMER}"
+        f"{disclaimer}"
     )
-    return title, description
+    tags_raw = os.environ.get("YOUTUBE_TAGS", "").strip()
+    tags = [t.strip() for t in tags_raw.split(",") if t.strip()] if tags_raw else [row["niche"]]
+    return title, description, tags
 
 
-def post_short(conn: sqlite3.Connection, short_id: int, auth: str) -> bool:
+def post_short(
+    conn: sqlite3.Connection,
+    short_id: int,
+    auth: str,
+    channel_id: str | None = None,
+    channel_title: str | None = None,
+) -> bool:
     if auth != "ok":
         print("auth blocked; not posting")
         return False
@@ -802,9 +960,9 @@ def post_short(conn: sqlite3.Connection, short_id: int, auth: str) -> bool:
     if not path.is_file():
         print(f"missing file for short {short_id}: {path}")
         return False
-    title, description = caption_for(conn, short_id)
+    title, description, tags = caption_for(conn, short_id)
     try:
-        result = share.publish_youtube_direct(path, title, description, ["Gudasol AI", "Aquarius Academy"], "public")
+        result = share.publish_youtube_direct(path, title, description, tags, "public")
     except Exception as exc:
         print(f"youtube upload failed: {exc}", file=sys.stderr)
         conn.execute("UPDATE shorts SET status = 'failed' WHERE id = ?", (short_id,))
@@ -816,22 +974,33 @@ def post_short(conn: sqlite3.Connection, short_id: int, auth: str) -> bool:
     url = f"https://www.youtube.com/watch?v={platform_id}" if platform_id else None
     conn.execute(
         """
-        INSERT INTO posts (short_id, platform, platform_id, url, caption, posted_at)
-        VALUES (?, 'youtube', ?, ?, ?, ?)
+        INSERT INTO posts (short_id, platform, platform_id, url, caption, posted_at, channel_id, channel_title)
+        VALUES (?, 'youtube', ?, ?, ?, ?, ?, ?)
         """,
-        (short_id, platform_id, url, title, utc_now()),
+        (short_id, platform_id, url, title, utc_now(), channel_id, channel_title),
     )
     conn.execute("UPDATE shorts SET status = 'posted' WHERE id = ?", (short_id,))
     conn.commit()
-    print(f"posted short {short_id} -> {url}")
+    print(f"posted short {short_id} -> {url} (channel={channel_title or channel_id or '?'})")
     return True
 
 
 def write_status(conn: sqlite3.Connection, summary: str) -> None:
-    lines = ["# CEO status", "", f"Updated: {utc_now()}", "", summary, "", "## Recent posts", ""]
+    lines = ["# CEO status", "", f"Updated: {utc_now()}", "", summary, "", "## Projects", ""]
+    projects = conn.execute(
+        "SELECT slug, channel_id, channel_title, path FROM projects ORDER BY slug"
+    ).fetchall()
+    if not projects:
+        lines.append("None registered yet.")
+    for row in projects:
+        lines.append(
+            f"- {row['slug']} · channel={row['channel_title'] or 'unknown'} "
+            f"({row['channel_id'] or 'no id'}) · {row['path']}"
+        )
+    lines.extend(["", "## Recent posts", ""])
     rows = conn.execute(
         """
-        SELECT p.posted_at, p.url, p.platform_id, s.layout, src.niche, src.title,
+        SELECT p.posted_at, p.url, p.platform_id, p.channel_title, s.layout, src.niche, src.title,
                (SELECT views FROM reads r WHERE r.post_id = p.id ORDER BY read_at DESC LIMIT 1) AS views,
                (SELECT likes FROM reads r WHERE r.post_id = p.id ORDER BY read_at DESC LIMIT 1) AS likes
         FROM posts p
@@ -844,13 +1013,14 @@ def write_status(conn: sqlite3.Connection, summary: str) -> None:
         lines.append("None yet.")
     for row in rows:
         lines.append(
-            f"- {row['posted_at']} · {row['niche']} · {row['layout']} · "
-            f"views={row['views']} likes={row['likes']} · {row['url'] or row['platform_id']}"
+            f"- {row['posted_at']} · {row['niche']} · {row['channel_title'] or 'channel?'} · "
+            f"{row['layout']} · views={row['views']} likes={row['likes']} · "
+            f"{row['url'] or row['platform_id']}"
         )
     lines.extend(["", "## Awaiting approval", ""])
     waiting = conn.execute(
         """
-        SELECT s.id, s.layout, s.path, src.title FROM shorts s
+        SELECT s.id, s.layout, s.path, src.title, src.niche FROM shorts s
         JOIN sources src ON src.id = s.source_id
         WHERE s.status = 'awaiting_approval'
         ORDER BY s.id
@@ -859,7 +1029,9 @@ def write_status(conn: sqlite3.Connection, summary: str) -> None:
     if not waiting:
         lines.append("None.")
     for row in waiting:
-        lines.append(f"- short {row['id']} · {row['layout']} · {row['path']} · {row['title']}")
+        lines.append(
+            f"- short {row['id']} · {row['niche']} · {row['layout']} · {row['path']} · {row['title']}"
+        )
     lines.extend(["", "## Last decisions", ""])
     for row in conn.execute("SELECT * FROM decisions ORDER BY id DESC LIMIT 8"):
         lines.append(f"- {row['decided_at']} · {row['niche']} · {row['layout']} · {row['reason']}")
@@ -882,18 +1054,26 @@ def cmd_approve(args: argparse.Namespace) -> int:
     if not row:
         print(f"unknown short {short_id}", file=sys.stderr)
         return 1
+    niche = niche_for_short(conn, short_id)
+    if not niche:
+        print(f"no niche folder for short {short_id}", file=sys.stderr)
+        return 1
     conn.execute(
         "UPDATE shorts SET status = 'rendered' WHERE id = ? AND status = 'awaiting_approval'",
         (short_id,),
     )
     conn.commit()
-    _, auth = youtube_refresh()
-    ok = post_short(conn, short_id, auth)
-    write_status(conn, f"Approved short {short_id}; posted={ok}.")
+    token, auth = youtube_refresh(niche)
+    channel_id = channel_title = None
+    if auth == "ok" and token:
+        channel_id, channel_title = fetch_channel(token)
+        upsert_project(conn, niche, channel_id, channel_title)
+    ok = post_short(conn, short_id, auth, channel_id, channel_title)
+    write_status(conn, f"Approved short {short_id} for {niche.name}; posted={ok}.")
     return 0 if ok or auth == "blocked" else 1
 
 
-def cmd_run(_: argparse.Namespace) -> int:
+def cmd_run(args: argparse.Namespace) -> int:
     conn = connect()
     started = utc_now()
     cur = conn.execute(
@@ -902,7 +1082,7 @@ def cmd_run(_: argparse.Namespace) -> int:
     )
     run_id = int(cur.lastrowid)
     conn.commit()
-    niche = pick_niche(conn)
+    niche = pick_niche(conn, getattr(args, "project", None))
     if not niche:
         summary = "No niche folder with both config.json and search-terms.md."
         conn.execute(
@@ -913,9 +1093,17 @@ def cmd_run(_: argparse.Namespace) -> int:
         write_status(conn, summary)
         print(summary)
         return 1
+    upsert_project(conn, niche)
     terms_doc = parse_terms(niche / "search-terms.md")
-    token, auth = youtube_refresh()
-    conn.execute("UPDATE runs SET niche = ?, auth = ? WHERE id = ?", (niche.name, auth, run_id))
+    token, auth = youtube_refresh(niche)
+    channel_id = channel_title = None
+    if auth == "ok" and token:
+        channel_id, channel_title = fetch_channel(token)
+        upsert_project(conn, niche, channel_id, channel_title)
+    conn.execute(
+        "UPDATE runs SET niche = ?, auth = ?, channel_id = ?, channel_title = ? WHERE id = ?",
+        (niche.name, auth, channel_id, channel_title, run_id),
+    )
     conn.commit()
     reads_n = 0
     if auth == "ok" and token:
@@ -930,7 +1118,10 @@ def cmd_run(_: argparse.Namespace) -> int:
     conn.commit()
     source_id = scout_source(conn, niche, terms_doc)
     if not source_id:
-        summary = f"{niche.name}: no source available this run (auth={auth})."
+        summary = (
+            f"{niche.name}: no source available this run "
+            f"(auth={auth}; channel={channel_title or 'unknown'})."
+        )
         conn.execute(
             "UPDATE runs SET finished_at = ?, summary = ? WHERE id = ?",
             (utc_now(), summary, run_id),
@@ -944,7 +1135,7 @@ def cmd_run(_: argparse.Namespace) -> int:
     if short_id:
         row = conn.execute("SELECT status FROM shorts WHERE id = ?", (short_id,)).fetchone()
         if row and row["status"] == "rendered" and not pause_active(conn, niche.name):
-            posted = post_short(conn, short_id, auth)
+            posted = post_short(conn, short_id, auth, channel_id, channel_title)
         elif row and row["status"] == "awaiting_approval":
             print(f"short {short_id} awaiting approval")
     best = conn.execute(
@@ -964,8 +1155,8 @@ def cmd_run(_: argparse.Namespace) -> int:
         else "no stats yet"
     )
     summary = (
-        f"{niche.name}: layout={layout}; short={short_id}; posted={posted}; "
-        f"reads={reads_n}; auth={auth}; next={layout}; {best_bits}"
+        f"{niche.name}: channel={channel_title or 'unknown'}; layout={layout}; "
+        f"short={short_id}; posted={posted}; reads={reads_n}; auth={auth}; {best_bits}"
     )
     conn.execute(
         "UPDATE runs SET finished_at = ?, summary = ? WHERE id = ?",
@@ -986,7 +1177,11 @@ def cmd_run(_: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("run", help="One scout/cut/post cycle")
+    run = sub.add_parser("run", help="One scout/cut/post cycle")
+    run.add_argument(
+        "--project",
+        help='Niche folder name, e.g. "Aquarius Academy" or Gudasol',
+    )
     sub.add_parser("status", help="Print data/ceo-status.md")
     approve = sub.add_parser("approve", help="Approve and post a short id")
     approve.add_argument("short_id")

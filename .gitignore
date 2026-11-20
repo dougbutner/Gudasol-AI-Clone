@@ -4,6 +4,8 @@ tools/detect_faces
 nango/__pycache__/
 
 .env
+**/.env
+!**/.env.example
 nango/
 Shorts/
 Long Videos/
@@ -22,4 +24,7 @@ rap-god/
 Aquarius Academy/sources/
 Aquarius Academy/**/*.mp4
 Aquarius Academy/**/.qa-*/
+Gudasol/sources/
+Gudasol/**/*.mp4
+Gudasol/**/.qa-*/
 data/awaiting-short.txt

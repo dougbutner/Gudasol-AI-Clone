@@ -1,8 +1,13 @@
 # CEO status
 
-Updated: 2026-11-20T08:05:40+00:00
+Updated: 2026-11-20T09:02:59+00:00
 
-Aquarius Academy: layout=full; short=1; posted=False; reads=0; auth=blocked; next=full; no stats yet
+multi-project store ready
+
+## Projects
+
+- Aquarius Academy · channel=unknown (no id) · Aquarius Academy
+- Gudasol · channel=unknown (no id) · Gudasol
 
 ## Recent posts
 
@@ -10,7 +15,7 @@ None yet.
 
 ## Awaiting approval
 
-- short 1 · full · Aquarius Academy/a-course-on-universal-consciousness-aquarius-academy/a-course-on-universal-consciousness-aquarius-academy-s01-full.mp4 · A Course on Universal Consciousness ⨇ Aquarius.Academy
+- short 1 · Aquarius Academy · full · Aquarius Academy/a-course-on-universal-consciousness-aquarius-academy/a-course-on-universal-consciousness-aquarius-academy-s01-full.mp4 · A Course on Universal Consciousness ⨇ Aquarius.Academy
 
 ## Last decisions
 

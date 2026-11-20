@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "0 */6 * * *"
   workflow_dispatch:
+    inputs:
+      project:
+        description: 'Niche folder (empty = rotate). Example: Aquarius Academy'
+        required: false
+        default: ""
 
 concurrency:
   group: ceo
@@ -34,20 +39,40 @@ jobs:
           python -m pip install --upgrade pip
           pip install faster-whisper yt-dlp certifi pillow
 
-      - name: Write YouTube secrets
+      - name: Write per-project YouTube secrets
         env:
-          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
-          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          AQUARIUS_YOUTUBE_CLIENT_ID: ${{ secrets.AQUARIUS_YOUTUBE_CLIENT_ID }}
+          AQUARIUS_YOUTUBE_CLIENT_SECRET: ${{ secrets.AQUARIUS_YOUTUBE_CLIENT_SECRET }}
+          AQUARIUS_YOUTUBE_REFRESH_TOKEN: ${{ secrets.AQUARIUS_YOUTUBE_REFRESH_TOKEN }}
+          GUDASOL_YOUTUBE_CLIENT_ID: ${{ secrets.GUDASOL_YOUTUBE_CLIENT_ID }}
+          GUDASOL_YOUTUBE_CLIENT_SECRET: ${{ secrets.GUDASOL_YOUTUBE_CLIENT_SECRET }}
+          GUDASOL_YOUTUBE_REFRESH_TOKEN: ${{ secrets.GUDASOL_YOUTUBE_REFRESH_TOKEN }}
         run: |
+          mkdir -p "Aquarius Academy" Gudasol
           {
-            echo "YOUTUBE_CLIENT_ID=${YOUTUBE_CLIENT_ID}"
-            echo "YOUTUBE_CLIENT_SECRET=${YOUTUBE_CLIENT_SECRET}"
-            echo "YOUTUBE_REFRESH_TOKEN=${YOUTUBE_REFRESH_TOKEN}"
-          } > .env
+            echo "YOUTUBE_CLIENT_ID=${AQUARIUS_YOUTUBE_CLIENT_ID}"
+            echo "YOUTUBE_CLIENT_SECRET=${AQUARIUS_YOUTUBE_CLIENT_SECRET}"
+            echo "YOUTUBE_REFRESH_TOKEN=${AQUARIUS_YOUTUBE_REFRESH_TOKEN}"
+            echo "YOUTUBE_TITLE_PREFIX=Aquarius Academy |"
+            echo "YOUTUBE_TAGS=Aquarius Academy,consciousness,universal consciousness"
+          } > "Aquarius Academy/.env"
+          {
+            echo "YOUTUBE_CLIENT_ID=${GUDASOL_YOUTUBE_CLIENT_ID}"
+            echo "YOUTUBE_CLIENT_SECRET=${GUDASOL_YOUTUBE_CLIENT_SECRET}"
+            echo "YOUTUBE_REFRESH_TOKEN=${GUDASOL_YOUTUBE_REFRESH_TOKEN}"
+            echo "YOUTUBE_TITLE_PREFIX=Gudasol AI |"
+            echo "YOUTUBE_TAGS=Gudasol AI,EASY"
+          } > "Gudasol/.env"
 
       - name: Run CEO
-        run: python tools/ceo.py run
+        env:
+          PROJECT: ${{ github.event.inputs.project }}
+        run: |
+          if [ -n "$PROJECT" ]; then
+            python tools/ceo.py run --project "$PROJECT"
+          else
+            python tools/ceo.py run
+          fi
 
       - name: Stage awaiting short artifact
         if: always()
@@ -76,7 +101,7 @@ jobs:
           git config user.name "ceo-bot"
           git config user.email "ceo-bot@users.noreply.github.com"
           git add data/ceo.sqlite data/ceo-status.md || true
-          git add "Aquarius Academy/search-terms.md" || true
+          git add "Aquarius Academy/search-terms.md" "Gudasol/search-terms.md" || true
           if git diff --cached --quiet; then
             echo "no store changes"
           else
