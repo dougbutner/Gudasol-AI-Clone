@@ -16,6 +16,8 @@ python3 tools/ceo.py run
 python3 tools/ceo.py run --project "Aquarius Academy"
 python3 tools/ceo.py run --project Gudasol
 python3 tools/ceo.py status
+python3 tools/ceo.py review
+python3 tools/ceo.py review --project Gudasol
 python3 tools/ceo.py approve <short_id>
 ```
 
@@ -55,6 +57,19 @@ prefix and tags come from that niche’s `.env`
 A support clip or fractal still is silent.
 
 Layouts under test: `full`, `main-bottom`, `cutaway`.
+
+## Effects (second arm)
+
+After the spoken section is found and the picture is cut with a layout,
+`tools/effects.py` picks one active moviepy preset (`none` is the control).
+The effect runs on the picture only; logo and captions are composited after
+so they stay sharp and the corner logo is not recolored.
+
+Each short stores `layout`, `subject` (spoken text of the window), and
+`effect` in `data/ceo.sqlite`. `run` calls a weekly effect review when the
+niche’s last review is older than 7 days; `review` runs it on demand. Weak
+effects (under 60% of `none` median likes/views after 4 qualified reads)
+are retired and the oldest bench preset is promoted. Never retire `none`.
 
 ## Guardrails
 

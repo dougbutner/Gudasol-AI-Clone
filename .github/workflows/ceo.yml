@@ -37,7 +37,7 @@ jobs:
       - name: Install Python deps
         run: |
           python -m pip install --upgrade pip
-          pip install faster-whisper yt-dlp certifi pillow
+          pip install faster-whisper yt-dlp certifi pillow 'moviepy>=2.0'
 
       - name: Write per-project YouTube secrets
         env:

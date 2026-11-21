@@ -4,11 +4,14 @@
   python3 tools/ceo.py run
   python3 tools/ceo.py run --project "Aquarius Academy"
   python3 tools/ceo.py status
+  python3 tools/ceo.py review
+  python3 tools/ceo.py review --project Gudasol
   python3 tools/ceo.py approve <short_id>
 
 Each niche folder has its own .env (YouTube channel). Shared keys may live in
 the repo-root .env. Memory lives in data/ceo.sqlite and tracks many projects
-and channels. Video files stay gitignored.
+and channels. Layout and effect are separate arms; weekly review prunes weak
+effects. Video files stay gitignored.
 """
 
 from __future__ import annotations
@@ -40,6 +43,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TOOLS = Path(__file__).resolve().parent
 sys.path.insert(0, str(TOOLS))
 
+import effects as fxcat  # noqa: E402
 import make_shorts as shorts  # noqa: E402
 import share_shorts as share  # noqa: E402
 
@@ -47,6 +51,9 @@ DATA = ROOT / "data"
 DB_PATH = DATA / "ceo.sqlite"
 STATUS_PATH = DATA / "ceo-status.md"
 LAYOUTS = ("full", "main-bottom", "cutaway")
+EFFECT_MIN_SAMPLES = 4
+EFFECT_RETIRE_RATIO = 0.60
+EFFECT_REVIEW_DAYS = 7
 HOST = "gha" if os.environ.get("GITHUB_ACTIONS") == "true" else "local"
 YOUTUBE_ENV_KEYS = (
     "YOUTUBE_ACCESS_TOKEN",
@@ -115,6 +122,29 @@ def migrate(conn: sqlite3.Connection) -> None:
             channel_title TEXT,
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS effects (
+            slug TEXT PRIMARY KEY,
+            fx TEXT NOT NULL,
+            params TEXT NOT NULL,
+            note TEXT
+        );
+        CREATE TABLE IF NOT EXISTS niche_effects (
+            niche TEXT NOT NULL,
+            slug TEXT NOT NULL,
+            pool TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (niche, slug)
+        );
+        CREATE TABLE IF NOT EXISTS effect_reviews (
+            id INTEGER PRIMARY KEY,
+            reviewed_at TEXT NOT NULL,
+            niche TEXT NOT NULL,
+            slug TEXT NOT NULL,
+            action TEXT NOT NULL,
+            samples INTEGER,
+            median_likes_views REAL,
+            reason TEXT
+        );
         """
     )
     post_cols = _table_cols(conn, "posts")
@@ -127,6 +157,38 @@ def migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE runs ADD COLUMN channel_id TEXT")
     if "channel_title" not in run_cols:
         conn.execute("ALTER TABLE runs ADD COLUMN channel_title TEXT")
+    short_cols = _table_cols(conn, "shorts")
+    if "subject" not in short_cols:
+        conn.execute("ALTER TABLE shorts ADD COLUMN subject TEXT")
+    if "effect" not in short_cols:
+        conn.execute("ALTER TABLE shorts ADD COLUMN effect TEXT")
+    decision_cols = _table_cols(conn, "decisions")
+    if "effect" not in decision_cols:
+        conn.execute("ALTER TABLE decisions ADD COLUMN effect TEXT")
+    for slug, fx_name, params, note in fxcat.seed_rows():
+        conn.execute(
+            """
+            INSERT INTO effects (slug, fx, params, note) VALUES (?, ?, ?, ?)
+            ON CONFLICT(slug) DO UPDATE SET fx = excluded.fx, params = excluded.params, note = excluded.note
+            """,
+            (slug, fx_name, params, note),
+        )
+    conn.commit()
+
+
+def ensure_niche_effects(conn: sqlite3.Connection, niche: str) -> None:
+    now = utc_now()
+    for slug, pool in fxcat.default_niche_pools():
+        row = conn.execute(
+            "SELECT slug FROM niche_effects WHERE niche = ? AND slug = ?",
+            (niche, slug),
+        ).fetchone()
+        if row:
+            continue
+        conn.execute(
+            "INSERT INTO niche_effects (niche, slug, pool, updated_at) VALUES (?, ?, ?, ?)",
+            (niche, slug, pool, now),
+        )
     conn.commit()
 
 
@@ -498,6 +560,109 @@ def choose_layout(conn: sqlite3.Connection, niche: str) -> tuple[str, str]:
     return layout, f"pick {layout} with median likes/views {medians[layout]:.4f}"
 
 
+def active_effect_slugs(conn: sqlite3.Connection, niche: str) -> list[str]:
+    ensure_niche_effects(conn, niche)
+    rows = conn.execute(
+        """
+        SELECT slug FROM niche_effects
+        WHERE niche = ? AND pool = 'active'
+        ORDER BY CASE WHEN slug = 'none' THEN 0 ELSE 1 END, slug
+        """,
+        (niche,),
+    ).fetchall()
+    return [row["slug"] for row in rows]
+
+
+def effect_ratio_samples(conn: sqlite3.Connection, niche: str) -> dict[str, list[float]]:
+    ready: dict[str, list[float]] = {}
+    for row in conn.execute(
+        """
+        SELECT COALESCE(s.effect, 'none') AS effect, r.views, r.likes, p.posted_at, r.read_at
+        FROM posts p
+        JOIN shorts s ON s.id = p.short_id
+        JOIN sources src ON src.id = s.source_id
+        JOIN reads r ON r.post_id = p.id
+        WHERE src.niche = ? AND p.platform = 'youtube'
+          AND r.views IS NOT NULL AND r.likes IS NOT NULL
+        """,
+        (niche,),
+    ):
+        posted = parse_time(row["posted_at"])
+        read_at = parse_time(row["read_at"])
+        if not posted or not read_at:
+            continue
+        if read_at - posted < timedelta(hours=24):
+            continue
+        views = int(row["views"] or 0)
+        likes = int(row["likes"] or 0)
+        if views <= 0:
+            continue
+        ready.setdefault(row["effect"], []).append(likes / views)
+    return ready
+
+
+def choose_effect(
+    conn: sqlite3.Connection,
+    niche: str,
+    plan: Any | None = None,
+) -> tuple[str, str]:
+    active = active_effect_slugs(conn, niche)
+    if not active:
+        return fxcat.CONTROL_SLUG, "no active effects; use none"
+    skip_note = ""
+    candidates = list(active)
+    is_jump = False
+    if plan is not None:
+        mode = getattr(plan, "mode", None)
+        reason_txt = str(getattr(plan, "reason", "") or "")
+        is_jump = mode == "jump" or "jumps" in reason_txt
+    if is_jump:
+        blocked = [s for s in candidates if s in fxcat.JUMP_SKIP_SLUGS]
+        if blocked:
+            candidates = [s for s in candidates if s not in fxcat.JUMP_SKIP_SLUGS]
+            skip_note = f"; skip {','.join(blocked)} on jump framing"
+            if not candidates:
+                return fxcat.CONTROL_SLUG, f"only jump-incompatible effects active; use none{skip_note}"
+    ready = effect_ratio_samples(conn, niche)
+    if any(len(ready.get(name, [])) < EFFECT_MIN_SAMPLES for name in candidates):
+        counts = {
+            name: conn.execute(
+                """
+                SELECT COUNT(*) FROM posts p
+                JOIN shorts s ON s.id = p.short_id
+                JOIN sources src ON src.id = s.source_id
+                WHERE src.niche = ? AND COALESCE(s.effect, 'none') = ?
+                """,
+                (niche, name),
+            ).fetchone()[0]
+            for name in candidates
+        }
+        effect = min(candidates, key=lambda name: (counts[name], candidates.index(name)))
+        return effect, f"rotate to {effect} until each active effect has {EFFECT_MIN_SAMPLES} posts with a 24h read{skip_note}"
+    medians = {
+        name: sorted(ready[name])[len(ready[name]) // 2]
+        for name in candidates
+        if ready.get(name)
+    }
+    if not medians:
+        return candidates[0], f"pick {candidates[0]} (no scored samples yet){skip_note}"
+    effect = max(medians, key=lambda name: medians[name])
+    return effect, f"pick {effect} with median likes/views {medians[effect]:.4f}{skip_note}"
+
+
+def subject_for_window(words: list[dict], start: float, end: float, max_chars: int = 280) -> str:
+    parts = [
+        str(w.get("text") or "").strip()
+        for w in words
+        if float(w.get("end") or 0) > start and float(w.get("start") or 0) < end
+    ]
+    text = " ".join(p for p in parts if p).strip()
+    text = re.sub(r"\s+", " ", text)
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1].rstrip() + "…"
+
+
 def next_term(conn: sqlite3.Connection, niche: str, terms: list[str]) -> str:
     if not terms:
         return ""
@@ -795,16 +960,18 @@ def cut_one(
     source_id: int,
     layout: str,
     on_lane: list[str],
-) -> int | None:
+) -> tuple[int | None, str, str]:
+    """Cut one short. Returns (short_id, effect, effect_reason)."""
     src = conn.execute("SELECT * FROM sources WHERE id = ?", (source_id,)).fetchone()
     if not src:
-        return None
+        return None, fxcat.CONTROL_SLUG, "no source"
     video = source_path(niche, src["youtube_id"])
     if not video.is_file():
         conn.execute("UPDATE sources SET status = 'download_failed' WHERE id = ?", (source_id,))
         conn.commit()
-        return None
+        return None, fxcat.CONTROL_SLUG, "download missing"
     apply_niche_style(niche)
+    ensure_niche_effects(conn, niche.name)
     payload = shorts.transcribe_hf(video)
     words = payload.get("words") or []
     windows = shorts.windows_from_transcript(payload, float(src["duration_sec"] or shorts.probe_duration(video)))
@@ -827,27 +994,39 @@ def cut_one(
     if not chosen:
         conn.execute("UPDATE sources SET status = 'cut' WHERE id = ?", (source_id,))
         conn.commit()
-        return None
+        return None, fxcat.CONTROL_SLUG, "no unused window"
     start, end = chosen
     cues = shorts.group_words(words, max_words=int(shorts.STYLE.get("words") or 3))
     section_cues = [c for c in cues if c["end"] > start and c["start"] < end]
+    subject = subject_for_window(words, start, end)
     support = find_support(niche, src["youtube_id"], on_lane)
     title_slug = shorts.slug(src["title"] or src["youtube_id"]) or src["youtube_id"]
     out_dir = niche / title_slug
     out_dir.mkdir(parents=True, exist_ok=True)
     n = conn.execute("SELECT COUNT(*) FROM shorts WHERE source_id = ?", (source_id,)).fetchone()[0] + 1
     dest = out_dir / f"{title_slug}-s{n:02d}-{layout}.mp4"
+    effect = fxcat.CONTROL_SLUG
+    effect_reason = "none"
     with tempfile.TemporaryDirectory(prefix="ceo-") as td:
         work = Path(td)
         try:
-            plan = shorts.render_layout_short(
-                video, start, end, section_cues, layout, work, dest,
-                support=support, words=words,
+            plan = shorts.plan_layout(
+                video, start, end, layout, work, support=support, words=words,
             )
+            picture = work / "picture.mp4"
+            shorts.render_picture(video, start, end, plan, work, picture)
+            effect, effect_reason = choose_effect(conn, niche.name, plan)
+            effected = work / "effected.mp4"
+            preset = fxcat.preset_by_slug(effect) or {"params": {}}
+            fxcat.apply(picture, effected, effect, dict(preset.get("params") or {}))
+            shorts.composite_top(effected, section_cues, start, end, work, dest)
         except Exception as exc:
             print(f"render failed: {exc}", file=sys.stderr)
-            return None
-        print(f"rendered {dest.name} {plan.summary()}")
+            return None, effect, f"render failed: {exc}"
+        print(
+            f"rendered {dest.name} {plan.summary()} effect={effect} "
+            f"cues={len(section_cues)} subject_chars={len(subject)}"
+        )
     frames = shorts.extract_qa_frames(dest, out_dir / f".qa-{dest.stem}")
     audio_n = shorts.audio_stream_count(dest)
     digest = sha256_file(dest)
@@ -863,8 +1042,11 @@ def cut_one(
     status = "awaiting_approval" if posts_n < 3 else "rendered"
     cur = conn.execute(
         """
-        INSERT INTO shorts (source_id, layout, start_sec, end_sec, path, sha256, audio_streams, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO shorts (
+            source_id, layout, start_sec, end_sec, path, sha256, audio_streams,
+            status, created_at, subject, effect
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             source_id,
@@ -876,6 +1058,8 @@ def cut_one(
             audio_n,
             status,
             utc_now(),
+            subject,
+            effect,
         ),
     )
     used.add((round(start, 2), round(end, 2)))
@@ -893,7 +1077,7 @@ def cut_one(
     conn.commit()
     print("qa frames:", ", ".join(str(p.relative_to(ROOT)) for p in frames))
     print(f"audio streams: {audio_n}")
-    return int(cur.lastrowid)
+    return int(cur.lastrowid), effect, effect_reason
 
 
 def niche_for_short(conn: sqlite3.Connection, short_id: int) -> Path | None:
@@ -926,14 +1110,166 @@ def caption_for(conn: sqlite3.Connection, short_id: int) -> tuple[str, str, list
     else:
         title = base
     disclaimer = os.environ.get("YOUTUBE_DISCLAIMER", "").strip() or share.DEFAULT_DISCLAIMER
+    effect = row["effect"] if "effect" in row.keys() else None
+    effect_bit = f" · effect {effect}" if effect else ""
     description = (
-        f"{row['niche']} short · layout {row['layout']}\n\n"
+        f"{row['niche']} short · layout {row['layout']}{effect_bit}\n\n"
         f"Source: https://www.youtube.com/watch?v={row['youtube_id']}\n\n"
         f"{disclaimer}"
     )
     tags_raw = os.environ.get("YOUTUBE_TAGS", "").strip()
     tags = [t.strip() for t in tags_raw.split(",") if t.strip()] if tags_raw else [row["niche"]]
     return title, description, tags
+
+
+def last_effect_review_at(conn: sqlite3.Connection, niche: str) -> datetime | None:
+    row = conn.execute(
+        "SELECT MAX(reviewed_at) AS t FROM effect_reviews WHERE niche = ?",
+        (niche,),
+    ).fetchone()
+    return parse_time(row["t"] if row else None)
+
+
+def needs_effect_review(conn: sqlite3.Connection, niche: str) -> bool:
+    last = last_effect_review_at(conn, niche)
+    if not last:
+        return True
+    return datetime.now(timezone.utc) - last >= timedelta(days=EFFECT_REVIEW_DAYS)
+
+
+def _median(vals: list[float]) -> float:
+    ordered = sorted(vals)
+    return ordered[len(ordered) // 2]
+
+
+def review_effects(conn: sqlite3.Connection, niche: str) -> str:
+    """Weekly prune: retire weak active effects, promote one bench preset."""
+    ensure_niche_effects(conn, niche)
+    now = utc_now()
+    ready = effect_ratio_samples(conn, niche)
+    active = active_effect_slugs(conn, niche)
+    none_vals = ready.get(fxcat.CONTROL_SLUG, [])
+    none_median = _median(none_vals) if len(none_vals) >= EFFECT_MIN_SAMPLES else None
+    actions: list[str] = []
+
+    if none_median is not None:
+        for slug in list(active):
+            if slug == fxcat.CONTROL_SLUG:
+                continue
+            vals = ready.get(slug, [])
+            if len(vals) < EFFECT_MIN_SAMPLES:
+                continue
+            med = _median(vals)
+            if none_median <= 0:
+                continue
+            if med >= EFFECT_RETIRE_RATIO * none_median:
+                conn.execute(
+                    """
+                    INSERT INTO effect_reviews
+                        (reviewed_at, niche, slug, action, samples, median_likes_views, reason)
+                    VALUES (?, ?, ?, 'keep', ?, ?, ?)
+                    """,
+                    (
+                        now,
+                        niche,
+                        slug,
+                        len(vals),
+                        med,
+                        f"keep {slug}: median {med:.4f} vs none {none_median:.4f}",
+                    ),
+                )
+                continue
+            remaining = [s for s in active if s != slug]
+            if len(remaining) < 2:  # none + at least one other
+                conn.execute(
+                    """
+                    INSERT INTO effect_reviews
+                        (reviewed_at, niche, slug, action, samples, median_likes_views, reason)
+                    VALUES (?, ?, ?, 'keep', ?, ?, ?)
+                    """,
+                    (
+                        now,
+                        niche,
+                        slug,
+                        len(vals),
+                        med,
+                        f"keep {slug}: would drop below none+one",
+                    ),
+                )
+                continue
+            conn.execute(
+                "UPDATE niche_effects SET pool = 'retired', updated_at = ? WHERE niche = ? AND slug = ?",
+                (now, niche, slug),
+            )
+            reason = (
+                f"retire {slug}: median {med:.4f} under "
+                f"{EFFECT_RETIRE_RATIO:.0%} of none {none_median:.4f}"
+            )
+            conn.execute(
+                """
+                INSERT INTO effect_reviews
+                    (reviewed_at, niche, slug, action, samples, median_likes_views, reason)
+                VALUES (?, ?, ?, 'retire', ?, ?, ?)
+                """,
+                (now, niche, slug, len(vals), med, reason),
+            )
+            actions.append(reason)
+            active = remaining
+            # Promote oldest bench so active returns toward five including none.
+            bench = conn.execute(
+                """
+                SELECT slug FROM niche_effects
+                WHERE niche = ? AND pool = 'bench'
+                ORDER BY updated_at ASC, slug ASC LIMIT 1
+                """,
+                (niche,),
+            ).fetchone()
+            if bench:
+                conn.execute(
+                    "UPDATE niche_effects SET pool = 'active', updated_at = ? WHERE niche = ? AND slug = ?",
+                    (now, niche, bench["slug"]),
+                )
+                promote_reason = f"promote {bench['slug']} after retiring {slug}"
+                conn.execute(
+                    """
+                    INSERT INTO effect_reviews
+                        (reviewed_at, niche, slug, action, samples, median_likes_views, reason)
+                    VALUES (?, ?, ?, 'promote', NULL, NULL, ?)
+                    """,
+                    (now, niche, bench["slug"], promote_reason),
+                )
+                actions.append(promote_reason)
+                active.append(bench["slug"])
+            break  # one retire per weekly pass
+
+    if not actions:
+        note = (
+            f"no retire this week; none_samples={len(none_vals)}; "
+            f"active={','.join(active)}"
+        )
+        conn.execute(
+            """
+            INSERT INTO effect_reviews
+                (reviewed_at, niche, slug, action, samples, median_likes_views, reason)
+            VALUES (?, ?, 'none', 'keep', ?, ?, ?)
+            """,
+            (
+                now,
+                niche,
+                len(none_vals),
+                none_median,
+                note,
+            ),
+        )
+        actions.append(note)
+
+    summary = "; ".join(actions)
+    conn.execute(
+        "INSERT INTO decisions (decided_at, niche, layout, term, reason, effect) VALUES (?, ?, ?, ?, ?, ?)",
+        (now, niche, None, None, f"effect review: {summary}", fxcat.CONTROL_SLUG),
+    )
+    conn.commit()
+    return summary
 
 
 def post_short(
@@ -985,6 +1321,51 @@ def post_short(
     return True
 
 
+def _effect_status_lines(conn: sqlite3.Connection) -> list[str]:
+    lines: list[str] = []
+    niches = [r["niche"] for r in conn.execute("SELECT DISTINCT niche FROM niche_effects ORDER BY niche")]
+    if not niches:
+        niches = [r["slug"] for r in conn.execute("SELECT slug FROM projects ORDER BY slug")]
+    if not niches:
+        return ["No effect pools yet."]
+    for niche in niches:
+        ensure_niche_effects(conn, niche)
+        ready = effect_ratio_samples(conn, niche)
+        active = active_effect_slugs(conn, niche)
+        med_bits = []
+        for slug in active:
+            vals = ready.get(slug, [])
+            if len(vals) >= EFFECT_MIN_SAMPLES:
+                med_bits.append(f"{slug}={_median(vals):.4f}(n={len(vals)})")
+            else:
+                med_bits.append(f"{slug}=n={len(vals)}")
+        bench = conn.execute(
+            """
+            SELECT slug FROM niche_effects
+            WHERE niche = ? AND pool = 'bench'
+            ORDER BY updated_at ASC, slug ASC LIMIT 1
+            """,
+            (niche,),
+        ).fetchone()
+        last = conn.execute(
+            """
+            SELECT reviewed_at, slug, action, reason FROM effect_reviews
+            WHERE niche = ? ORDER BY id DESC LIMIT 1
+            """,
+            (niche,),
+        ).fetchone()
+        lines.append(f"- {niche} active: {', '.join(active)}")
+        lines.append(f"  medians: {', '.join(med_bits) if med_bits else 'none yet'}")
+        lines.append(f"  next bench: {bench['slug'] if bench else 'empty'}")
+        if last:
+            lines.append(
+                f"  last review: {last['reviewed_at']} · {last['action']} {last['slug']} · {last['reason']}"
+            )
+        else:
+            lines.append("  last review: never")
+    return lines
+
+
 def write_status(conn: sqlite3.Connection, summary: str) -> None:
     lines = ["# CEO status", "", f"Updated: {utc_now()}", "", summary, "", "## Projects", ""]
     projects = conn.execute(
@@ -997,10 +1378,12 @@ def write_status(conn: sqlite3.Connection, summary: str) -> None:
             f"- {row['slug']} · channel={row['channel_title'] or 'unknown'} "
             f"({row['channel_id'] or 'no id'}) · {row['path']}"
         )
+    lines.extend(["", "## Effects", ""])
+    lines.extend(_effect_status_lines(conn))
     lines.extend(["", "## Recent posts", ""])
     rows = conn.execute(
         """
-        SELECT p.posted_at, p.url, p.platform_id, p.channel_title, s.layout, src.niche, src.title,
+        SELECT p.posted_at, p.url, p.platform_id, p.channel_title, s.layout, s.effect, src.niche, src.title,
                (SELECT views FROM reads r WHERE r.post_id = p.id ORDER BY read_at DESC LIMIT 1) AS views,
                (SELECT likes FROM reads r WHERE r.post_id = p.id ORDER BY read_at DESC LIMIT 1) AS likes
         FROM posts p
@@ -1012,15 +1395,16 @@ def write_status(conn: sqlite3.Connection, summary: str) -> None:
     if not rows:
         lines.append("None yet.")
     for row in rows:
+        effect = row["effect"] or "none"
         lines.append(
             f"- {row['posted_at']} · {row['niche']} · {row['channel_title'] or 'channel?'} · "
-            f"{row['layout']} · views={row['views']} likes={row['likes']} · "
+            f"{row['layout']} · {effect} · views={row['views']} likes={row['likes']} · "
             f"{row['url'] or row['platform_id']}"
         )
     lines.extend(["", "## Awaiting approval", ""])
     waiting = conn.execute(
         """
-        SELECT s.id, s.layout, s.path, src.title, src.niche FROM shorts s
+        SELECT s.id, s.layout, s.effect, s.path, src.title, src.niche FROM shorts s
         JOIN sources src ON src.id = s.source_id
         WHERE s.status = 'awaiting_approval'
         ORDER BY s.id
@@ -1030,11 +1414,17 @@ def write_status(conn: sqlite3.Connection, summary: str) -> None:
         lines.append("None.")
     for row in waiting:
         lines.append(
-            f"- short {row['id']} · {row['niche']} · {row['layout']} · {row['path']} · {row['title']}"
+            f"- short {row['id']} · {row['niche']} · {row['layout']} · "
+            f"{row['effect'] or 'none'} · {row['path']} · {row['title']}"
         )
     lines.extend(["", "## Last decisions", ""])
     for row in conn.execute("SELECT * FROM decisions ORDER BY id DESC LIMIT 8"):
-        lines.append(f"- {row['decided_at']} · {row['niche']} · {row['layout']} · {row['reason']}")
+        effect = row["effect"] if "effect" in row.keys() else None
+        layout = row["layout"] or "—"
+        effect_bit = f" · {effect}" if effect else ""
+        lines.append(
+            f"- {row['decided_at']} · {row['niche']} · {layout}{effect_bit} · {row['reason']}"
+        )
     STATUS_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -1044,6 +1434,23 @@ def cmd_status(_: argparse.Namespace) -> int:
         print(STATUS_PATH.read_text(encoding="utf-8"))
     else:
         print("no status yet; run python3 tools/ceo.py run")
+    return 0
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    conn = connect()
+    niche = resolve_niche(getattr(args, "project", None)) if getattr(args, "project", None) else None
+    niches = [niche] if niche else niche_dirs()
+    if not niches:
+        print("No niche folder with both config.json and search-terms.md.", file=sys.stderr)
+        return 1
+    notes = []
+    for path in niches:
+        upsert_project(conn, path)
+        note = review_effects(conn, path.name)
+        notes.append(f"{path.name}: {note}")
+        print(notes[-1])
+    write_status(conn, "Effect review: " + " | ".join(notes))
     return 0
 
 
@@ -1109,12 +1516,18 @@ def cmd_run(args: argparse.Namespace) -> int:
     if auth == "ok" and token:
         reads_n = read_stats(conn, token, niche.name)
         update_stuck_and_pause(conn, niche.name)
+    ensure_niche_effects(conn, niche.name)
+    review_note = ""
+    if needs_effect_review(conn, niche.name):
+        review_note = review_effects(conn, niche.name)
+        print(f"effect review: {review_note}")
     layout, reason = choose_layout(conn, niche.name)
     term = next_term(conn, niche.name, terms_doc["terms"])
-    conn.execute(
-        "INSERT INTO decisions (decided_at, niche, layout, term, reason) VALUES (?, ?, ?, ?, ?)",
-        (utc_now(), niche.name, layout, term, reason),
+    cur_decision = conn.execute(
+        "INSERT INTO decisions (decided_at, niche, layout, term, reason, effect) VALUES (?, ?, ?, ?, ?, ?)",
+        (utc_now(), niche.name, layout, term, reason, None),
     )
+    decision_id = int(cur_decision.lastrowid)
     conn.commit()
     source_id = scout_source(conn, niche, terms_doc)
     if not source_id:
@@ -1130,7 +1543,17 @@ def cmd_run(args: argparse.Namespace) -> int:
         write_status(conn, summary)
         print(summary)
         return 0
-    short_id = cut_one(conn, niche, source_id, layout, terms_doc["on_lane"])
+    short_id, effect, effect_reason = cut_one(
+        conn, niche, source_id, layout, terms_doc["on_lane"]
+    )
+    combined = f"{reason} | effect {effect}: {effect_reason}"
+    if review_note:
+        combined = f"{combined} | review: {review_note}"
+    conn.execute(
+        "UPDATE decisions SET effect = ?, reason = ? WHERE id = ?",
+        (effect, combined, decision_id),
+    )
+    conn.commit()
     posted = False
     if short_id:
         row = conn.execute("SELECT status FROM shorts WHERE id = ?", (short_id,)).fetchone()
@@ -1140,7 +1563,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             print(f"short {short_id} awaiting approval")
     best = conn.execute(
         """
-        SELECT r.views, r.likes, s.layout FROM posts p
+        SELECT r.views, r.likes, s.layout, s.effect FROM posts p
         JOIN shorts s ON s.id = p.short_id
         JOIN sources src ON src.id = s.source_id
         JOIN reads r ON r.post_id = p.id
@@ -1150,13 +1573,15 @@ def cmd_run(args: argparse.Namespace) -> int:
         (niche.name,),
     ).fetchone()
     best_bits = (
-        f"best views={best['views']} likes={best['likes']} layout={best['layout']}"
+        f"best views={best['views']} likes={best['likes']} "
+        f"layout={best['layout']} effect={best['effect'] or 'none'}"
         if best
         else "no stats yet"
     )
     summary = (
         f"{niche.name}: channel={channel_title or 'unknown'}; layout={layout}; "
-        f"short={short_id}; posted={posted}; reads={reads_n}; auth={auth}; {best_bits}"
+        f"effect={effect}; short={short_id}; posted={posted}; reads={reads_n}; "
+        f"auth={auth}; {best_bits}"
     )
     conn.execute(
         "UPDATE runs SET finished_at = ?, summary = ? WHERE id = ?",
@@ -1183,6 +1608,11 @@ def main() -> int:
         help='Niche folder name, e.g. "Aquarius Academy" or Gudasol',
     )
     sub.add_parser("status", help="Print data/ceo-status.md")
+    review = sub.add_parser("review", help="Weekly effect prune/promote for a niche")
+    review.add_argument(
+        "--project",
+        help='Niche folder name, e.g. "Aquarius Academy" or Gudasol (default: all)',
+    )
     approve = sub.add_parser("approve", help="Approve and post a short id")
     approve.add_argument("short_id")
     args = parser.parse_args()
@@ -1190,6 +1620,8 @@ def main() -> int:
         return cmd_run(args)
     if args.cmd == "status":
         return cmd_status(args)
+    if args.cmd == "review":
+        return cmd_review(args)
     return cmd_approve(args)
 
 
