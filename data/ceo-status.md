@@ -1,6 +1,6 @@
 # CEO status
 
-Updated: 2026-11-22T05:39:46+00:00
+Updated: 2026-11-22T14:16:22+00:00
 
 Aquarius Academy: no source available this run (auth=blocked).
 
@@ -14,6 +14,7 @@ None yet.
 
 ## Last decisions
 
+- 2026-11-22T14:16:21+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
 - 2026-11-22T05:39:45+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
 - 2026-11-21T18:49:54+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
 - 2026-11-21T06:04:36+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
