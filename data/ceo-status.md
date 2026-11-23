@@ -1,8 +1,8 @@
 # CEO status
 
-Updated: 2026-11-21T18:04:14+00:00
+Updated: 2026-11-23T06:23:12+00:00
 
-Effect review: Gudasol: no retire this week; none_samples=0; active=none,cool,fade-in,lift-contrast,warm
+Aquarius Academy: no source available this run (auth=blocked).
 
 ## Projects
 
@@ -30,6 +30,11 @@ None yet.
 
 ## Last decisions
 
-- 2026-11-21T18:04:14+00:00 · Gudasol · None · none · effect review: no retire this week; none_samples=0; active=none,cool,fade-in,lift-contrast,warm
-- 2026-11-21T18:02:57+00:00 · Aquarius Academy · None · none · effect review: no retire this week; none_samples=0; active=none,cool,fade-in,lift-contrast,warm
-- 2026-11-20T08:02:41+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
+- 2026-11-23T06:23:09+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
+- 2026-11-22T23:23:28+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
+- 2026-11-22T14:16:21+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
+- 2026-11-22T05:39:45+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
+- 2026-11-21T18:49:54+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
+- 2026-11-21T18:04:14+00:00 · Gudasol · — · none · effect review: no retire this week; none_samples=0; active=none,cool,fade-in,lift-contrast,warm
+- 2026-11-21T18:02:57+00:00 · Aquarius Academy · — · none · effect review: no retire this week; none_samples=0; active=none,cool,fade-in,lift-contrast,warm
+- 2026-11-21T06:04:36+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
