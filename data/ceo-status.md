@@ -1,8 +1,8 @@
 # CEO status
 
-Updated: 2026-11-23T20:38:24+00:00
+Updated: 2026-11-23T23:33:34+00:00
 
-Chi hooks rebuilt: big tight captions, and the viral clip is full frame. s03-full-warm and s04-cutaway-cool are still on disk from the earlier pass and were not rows in the database.
+Gudasol: no source available this run (auth=blocked; channel=unknown).
 
 ## Projects
 
@@ -28,7 +28,7 @@ clips on disk unused=4 used-and-deleted=2
   last review: never
 - Gudasol kinds: ask, cloud, viral
   styles: invert, marker, neon, pill, shadow, stroke
-  last review: never
+  last review: 2026-11-23T23:33:32+00:00 · keep hook · no hook retire this week
 
 ## Recent posts
 
@@ -48,11 +48,11 @@ None yet.
 
 ## Last decisions
 
+- 2026-11-23T23:33:32+00:00 · Gudasol · full · rotate to full until each arm has 4 posts with a 24h read
+- 2026-11-23T23:33:32+00:00 · Gudasol · — · hook review: no hook retire this week
 - 2026-11-23T06:23:09+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
 - 2026-11-22T23:23:28+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
 - 2026-11-22T14:16:21+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
 - 2026-11-22T05:39:45+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
 - 2026-11-21T18:49:54+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
 - 2026-11-21T18:04:14+00:00 · Gudasol · — · none · effect review: no retire this week; none_samples=0; active=none,cool,fade-in,lift-contrast,warm
-- 2026-11-21T18:02:57+00:00 · Aquarius Academy · — · none · effect review: no retire this week; none_samples=0; active=none,cool,fade-in,lift-contrast,warm
-- 2026-11-21T06:04:36+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
