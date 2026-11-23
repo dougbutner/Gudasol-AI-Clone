@@ -65,16 +65,55 @@ After the spoken section is found and the picture is cut with a layout,
 The effect runs on the picture only; logo and captions are composited after
 so they stay sharp and the corner logo is not recolored.
 
-Each short stores `layout`, `subject` (spoken text of the window), and
-`effect` in `data/ceo.sqlite`. `run` calls a weekly effect review when the
-niche’s last review is older than 7 days; `review` runs it on demand. Weak
-effects (under 60% of `none` median likes/views after 4 qualified reads)
-are retired and the oldest bench preset is promoted. Never retire `none`.
+Each short stores `layout`, `subject` (spoken text of the window),
+`effect`, and `hook` in `data/ceo.sqlite`. `run` calls a weekly effect
+review when the niche’s last review is older than 7 days; `review` runs it
+on demand. Weak effects (under 60% of `none` median likes/views after 4
+qualified reads) are retired and the oldest bench preset is promoted.
+Never retire `none`.
+
+## Hooks
+
+Every short opens with a hook of about two seconds. The letters are Bebas
+Neue, big, and stacked close enough to read as one caption. They ease in
+(a short scale and fade, no bounce) and then hold. Three kinds:
+
+- `cloud` — his content words, one line each, the main word a little larger.
+- `ask` — a short question or a choice (`WHAT IS`, `IMAGINE`, `FEEL`,
+  `CHOOSE … OR`, `TEACH … BACK`, `WHERE DOES … LIVE`). If he already opens
+  with a question, those words are used.
+- `viral` — a muted clip at full frame for two seconds, with the same big
+  `THIS IS …` line. The line fades out from 1.5s over half a second. The
+  corner logo fades in at 1 second and stays. The class audio is the only
+  audio. If no clip can be fetched, the short uses `ask` instead.
+
+The callout look is one of six editor styles: `stroke`, `pill`, `invert`,
+`marker`, `neon`, `shadow`. `run` rotates the least-posted kind and style.
+`review` retires a style under 60% of the best style after 4 qualified
+reads, and never leaves fewer than 5 styles or 2 kinds.
+
+```bash
+python3 tools/ceo.py hooks
+python3 tools/ceo.py hooks --n 8
+```
+
+`hooks` reads the live libraries, downloads clips that are not already in
+`hook_clips`, and writes them to `data/hooks/` (gitignored). A short deletes
+its clip after the file is burned. The row stays, with `used_at` set, so the
+same url is not treated as new. When the live list has nothing new, `hooks`
+refreshes the oldest used clips. Skip titles that name a baby, a child, an
+injury, vomit, or blood.
+
+Libraries that serve a file: AISEO `download?clip=0` through `230`,
+viralhookmaster `/hooks/{slug}.mp4`, and the HighConvert shopify mp4s.
+`goviralhooks.com/library` returned HTTP 500. `viralhooks.org/tools/video-editor`
+is an editor page with no clip files.
 
 ## Guardrails
 
 - First three posts of a niche stay `awaiting_approval` until
   `python3 tools/ceo.py approve <id>`.
 - Ask before paying, signing up, messaging anyone, or changing a profile.
-- Do not delete `sources/`. Clean render temps only.
+- Do not delete `sources/`. Clean render temps, and delete a hook clip
+  after the short that used it is written.
 - Secrets stay in each niche’s `.env` / Actions secrets and are never printed.

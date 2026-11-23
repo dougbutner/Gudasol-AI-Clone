@@ -28,3 +28,4 @@ Gudasol/sources/
 Gudasol/**/*.mp4
 Gudasol/**/.qa-*/
 data/awaiting-short.txt
+data/hooks/

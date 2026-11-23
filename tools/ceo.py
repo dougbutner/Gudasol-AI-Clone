@@ -7,11 +7,13 @@
   python3 tools/ceo.py review
   python3 tools/ceo.py review --project Gudasol
   python3 tools/ceo.py approve <short_id>
+  python3 tools/ceo.py hooks
 
 Each niche folder has its own .env (YouTube channel). Shared keys may live in
 the repo-root .env. Memory lives in data/ceo.sqlite and tracks many projects
-and channels. Layout and effect are separate arms; weekly review prunes weak
-effects. Video files stay gitignored.
+and channels. Layout, effect, and the opening hook are separate arms; weekly
+review prunes weak effects and weak hook styles. Viral clip files stay in
+data/hooks, are gitignored, and are deleted after the short that uses them.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ import argparse
 import hashlib
 import json
 import os
+import random
 import re
 import shutil
 import sqlite3
@@ -44,6 +47,7 @@ TOOLS = Path(__file__).resolve().parent
 sys.path.insert(0, str(TOOLS))
 
 import effects as fxcat  # noqa: E402
+import hooks  # noqa: E402
 import make_shorts as shorts  # noqa: E402
 import share_shorts as share  # noqa: E402
 
@@ -145,6 +149,31 @@ def migrate(conn: sqlite3.Connection) -> None:
             median_likes_views REAL,
             reason TEXT
         );
+        CREATE TABLE IF NOT EXISTS hook_clips (
+            url TEXT PRIMARY KEY,
+            source TEXT NOT NULL,
+            slug TEXT NOT NULL,
+            title TEXT,
+            fetched_at TEXT NOT NULL,
+            used_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS niche_hooks (
+            niche TEXT NOT NULL,
+            slug TEXT NOT NULL,
+            pool TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (niche, slug)
+        );
+        CREATE TABLE IF NOT EXISTS hook_reviews (
+            id INTEGER PRIMARY KEY,
+            reviewed_at TEXT NOT NULL,
+            niche TEXT NOT NULL,
+            slug TEXT NOT NULL,
+            action TEXT NOT NULL,
+            samples INTEGER,
+            median_likes_views REAL,
+            reason TEXT
+        );
         """
     )
     post_cols = _table_cols(conn, "posts")
@@ -162,6 +191,8 @@ def migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE shorts ADD COLUMN subject TEXT")
     if "effect" not in short_cols:
         conn.execute("ALTER TABLE shorts ADD COLUMN effect TEXT")
+    if "hook" not in short_cols:
+        conn.execute("ALTER TABLE shorts ADD COLUMN hook TEXT")
     decision_cols = _table_cols(conn, "decisions")
     if "effect" not in decision_cols:
         conn.execute("ALTER TABLE decisions ADD COLUMN effect TEXT")
@@ -190,6 +221,210 @@ def ensure_niche_effects(conn: sqlite3.Connection, niche: str) -> None:
             (niche, slug, pool, now),
         )
     conn.commit()
+
+
+def ensure_niche_hooks(conn: sqlite3.Connection, niche: str) -> None:
+    now = utc_now()
+    for slug, pool in hooks.pools():
+        row = conn.execute(
+            "SELECT slug FROM niche_hooks WHERE niche = ? AND slug = ?",
+            (niche, slug),
+        ).fetchone()
+        if row:
+            continue
+        conn.execute(
+            "INSERT INTO niche_hooks (niche, slug, pool, updated_at) VALUES (?, ?, ?, ?)",
+            (niche, slug, pool, now),
+        )
+    conn.commit()
+
+
+def active_hook_names(conn: sqlite3.Connection, niche: str, arm: str) -> list[str]:
+    ensure_niche_hooks(conn, niche)
+    rows = conn.execute(
+        """
+        SELECT slug FROM niche_hooks
+        WHERE niche = ? AND pool = 'active' AND slug LIKE ?
+        ORDER BY slug
+        """,
+        (niche, arm + ":%"),
+    ).fetchall()
+    return [row["slug"].split(":", 1)[1] for row in rows]
+
+
+def _hook_post_count(conn: sqlite3.Connection, niche: str, arm: str, name: str) -> int:
+    like = f"{name}/%" if arm == "kind" else f"%/{name}/%"
+    return conn.execute(
+        """
+        SELECT COUNT(*) FROM posts p
+        JOIN shorts s ON s.id = p.short_id
+        JOIN sources src ON src.id = s.source_id
+        WHERE src.niche = ? AND COALESCE(s.hook, '') LIKE ?
+        """,
+        (niche, like),
+    ).fetchone()[0]
+
+
+def choose_hook(conn: sqlite3.Connection, niche: str, rng: random.Random) -> tuple[str, str, str, str]:
+    picked = []
+    for arm in ("kind", "style"):
+        options = active_hook_names(conn, niche, arm)
+        if not options:
+            options = list(hooks.KINDS if arm == "kind" else hooks.STYLES)
+        counts = [( _hook_post_count(conn, niche, arm, name), i, name) for i, name in enumerate(options)]
+        low = min(item[0] for item in counts)
+        tied = [item[2] for item in counts if item[0] == low]
+        picked.append(rng.choice(tied))
+    shape = rng.choice(hooks.SHAPES)
+    return (
+        picked[0],
+        picked[1],
+        shape,
+        f"rotate hook {picked[0]}/{picked[1]}/{shape} until each active kind and style has {EFFECT_MIN_SAMPLES} posts with a 24h read",
+    )
+
+
+def take_clip(conn: sqlite3.Connection) -> tuple[Path | None, str | None, str | None]:
+    """An unused clip already on disk, or one new download. None when the libraries miss."""
+    inbox = DATA / "hooks"
+    inbox.mkdir(parents=True, exist_ok=True)
+    row = conn.execute(
+        "SELECT url, slug FROM hook_clips WHERE used_at IS NULL ORDER BY fetched_at LIMIT 1"
+    ).fetchone()
+    if row:
+        path = inbox / f"{row['slug']}.mp4"
+        if path.is_file() or hooks.save(row["url"], path):
+            return path, row["slug"], row["url"]
+    rows, _notes = hooks.catalog()
+    have = {item["url"] for item in conn.execute("SELECT url FROM hook_clips")}
+    for item in rows:
+        if item["url"] in have or hooks.blocked(item["title"], item["slug"]):
+            continue
+        path = inbox / f"{item['slug']}.mp4"
+        if not hooks.save(item["url"], path):
+            continue
+        conn.execute(
+            """
+            INSERT INTO hook_clips (url, source, slug, title, fetched_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (item["url"], item["source"], item["slug"], item["title"], utc_now()),
+        )
+        conn.commit()
+        return path, item["slug"], item["url"]
+    return None, None, None
+
+
+def hook_ratio_samples(conn: sqlite3.Connection, niche: str, arm: str) -> dict[str, list[float]]:
+    ready: dict[str, list[float]] = {}
+    for row in conn.execute(
+        """
+        SELECT COALESCE(s.hook, '') AS hook, r.views, r.likes, p.posted_at, r.read_at
+        FROM posts p
+        JOIN shorts s ON s.id = p.short_id
+        JOIN sources src ON src.id = s.source_id
+        JOIN reads r ON r.post_id = p.id
+        WHERE src.niche = ? AND p.platform = 'youtube'
+          AND r.views IS NOT NULL AND r.likes IS NOT NULL
+        """,
+        (niche,),
+    ):
+        posted = parse_time(row["posted_at"])
+        read_at = parse_time(row["read_at"])
+        if not posted or not read_at or read_at - posted < timedelta(hours=24):
+            continue
+        views = int(row["views"] or 0)
+        likes = int(row["likes"] or 0)
+        if views <= 0:
+            continue
+        parts = str(row["hook"]).split("/")
+        if arm == "kind" and parts and parts[0]:
+            name = parts[0]
+        elif arm == "style" and len(parts) > 1:
+            name = parts[1]
+        else:
+            continue
+        ready.setdefault(name, []).append(likes / views)
+    return ready
+
+
+def last_hook_review_at(conn: sqlite3.Connection, niche: str) -> datetime | None:
+    row = conn.execute(
+        "SELECT MAX(reviewed_at) AS t FROM hook_reviews WHERE niche = ?",
+        (niche,),
+    ).fetchone()
+    return parse_time(row["t"] if row else None)
+
+
+def needs_hook_review(conn: sqlite3.Connection, niche: str) -> bool:
+    last = last_hook_review_at(conn, niche)
+    if not last:
+        return True
+    return datetime.now(timezone.utc) - last >= timedelta(days=7)
+
+
+def review_hooks(conn: sqlite3.Connection, niche: str) -> str:
+    """Retire a weak style or kind. Keep at least five styles and two kinds."""
+    ensure_niche_hooks(conn, niche)
+    now = utc_now()
+    actions: list[str] = []
+    floors = {"kind": 2, "style": 5}
+    for arm, floor in floors.items():
+        ready = hook_ratio_samples(conn, niche, arm)
+        active = active_hook_names(conn, niche, arm)
+        scored = {
+            name: _median(vals)
+            for name, vals in ready.items()
+            if name in active and len(vals) >= EFFECT_MIN_SAMPLES
+        }
+        if len(scored) < 2:
+            continue
+        best_name = max(scored, key=lambda name: scored[name])
+        best = scored[best_name]
+        if best <= 0:
+            continue
+        for name, med in scored.items():
+            if name == best_name or med >= EFFECT_RETIRE_RATIO * best:
+                continue
+            if len(active) - 1 < floor:
+                break
+            slug = f"{arm}:{name}"
+            conn.execute(
+                "UPDATE niche_hooks SET pool = 'retired', updated_at = ? WHERE niche = ? AND slug = ?",
+                (now, niche, slug),
+            )
+            reason = (
+                f"retire {slug}: median {med:.4f} under "
+                f"{EFFECT_RETIRE_RATIO:.0%} of {best_name} {best:.4f}"
+            )
+            conn.execute(
+                """
+                INSERT INTO hook_reviews
+                    (reviewed_at, niche, slug, action, samples, median_likes_views, reason)
+                VALUES (?, ?, ?, 'retire', ?, ?, ?)
+                """,
+                (now, niche, slug, len(ready.get(name, [])), med, reason),
+            )
+            actions.append(reason)
+            break
+    if not actions:
+        note = "no hook retire this week"
+        conn.execute(
+            """
+            INSERT INTO hook_reviews
+                (reviewed_at, niche, slug, action, samples, median_likes_views, reason)
+            VALUES (?, ?, 'hook', 'keep', NULL, NULL, ?)
+            """,
+            (now, niche, note),
+        )
+        actions.append(note)
+    summary = "; ".join(actions)
+    conn.execute(
+        "INSERT INTO decisions (decided_at, niche, layout, term, reason, effect) VALUES (?, ?, ?, ?, ?, ?)",
+        (now, niche, None, None, f"hook review: {summary}", None),
+    )
+    conn.commit()
+    return summary
 
 
 def connect() -> sqlite3.Connection:
@@ -960,6 +1195,9 @@ def cut_one(
     source_id: int,
     layout: str,
     on_lane: list[str],
+    start_at: float | None = None,
+    end_at: float | None = None,
+    hook_kind: str | None = None,
 ) -> tuple[int | None, str, str]:
     """Cut one short. Returns (short_id, effect, effect_reason)."""
     src = conn.execute("SELECT * FROM sources WHERE id = ?", (source_id,)).fetchone()
@@ -972,6 +1210,7 @@ def cut_one(
         return None, fxcat.CONTROL_SLUG, "download missing"
     apply_niche_style(niche)
     ensure_niche_effects(conn, niche.name)
+    ensure_niche_hooks(conn, niche.name)
     payload = shorts.transcribe_hf(video)
     words = payload.get("words") or []
     windows = shorts.windows_from_transcript(payload, float(src["duration_sec"] or shorts.probe_duration(video)))
@@ -983,7 +1222,9 @@ def cut_one(
         )
     }
     chosen = None
-    for a, b in windows:
+    if start_at is not None and end_at is not None:
+        chosen = (float(start_at), float(end_at))
+    for a, b in windows if chosen is None else []:
         if not (shorts.MIN_SHORT <= (b - a) <= shorts.MAX_SHORT):
             continue
         key = (round(a, 2), round(b, 2))
@@ -1004,9 +1245,15 @@ def cut_one(
     out_dir = niche / title_slug
     out_dir.mkdir(parents=True, exist_ok=True)
     n = conn.execute("SELECT COUNT(*) FROM shorts WHERE source_id = ?", (source_id,)).fetchone()[0] + 1
-    dest = out_dir / f"{title_slug}-s{n:02d}-{layout}.mp4"
+    for path in out_dir.glob(f"{title_slug}-s*.mp4"):
+        found = re.search(r"-s(\d+)", path.name)
+        if found:
+            n = max(n, int(found.group(1)) + 1)
     effect = fxcat.CONTROL_SLUG
     effect_reason = "none"
+    hook_key = ""
+    clip_url = None
+    clip_path = None
     with tempfile.TemporaryDirectory(prefix="ceo-") as td:
         work = Path(td)
         try:
@@ -1019,15 +1266,43 @@ def cut_one(
             effected = work / "effected.mp4"
             preset = fxcat.preset_by_slug(effect) or {"params": {}}
             fxcat.apply(picture, effected, effect, dict(preset.get("params") or {}))
+            rng = random.Random(f"{niche.name}-{start:.2f}-{subject[:40]}")
+            kind, style, shape, hook_reason = choose_hook(conn, niche.name, rng)
+            if hook_kind in hooks.KINDS:
+                kind = hook_kind
+                hook_reason = f"pass hook {kind}/{style}/{shape}"
+            clip_slug = None
+            if kind == "viral":
+                clip_path, clip_slug, clip_url = take_clip(conn)
+                if clip_path is None:
+                    kind = "ask" if "ask" in active_hook_names(conn, niche.name, "kind") else "cloud"
+                    hook_reason = f"{hook_reason}; no viral clip, use {kind}"
+            words_hook, emphasis = hooks.phrase(subject, kind, rng)
+            hook_key = f"{kind}/{style}/{shape}" + (f"/{clip_slug}" if clip_slug and kind == "viral" else "")
+            dest = out_dir / f"{title_slug}-s{n:02d}-{layout}-{effect}-{kind}.mp4"
             shorts.composite_top(
                 effected, section_cues, start, end, work, dest, layout=layout,
+                hook={
+                    "kind": kind,
+                    "style": style,
+                    "shape": shape,
+                    "words": words_hook,
+                    "emphasis": emphasis,
+                    "clip": clip_path if kind == "viral" else None,
+                },
             )
         except Exception as exc:
             print(f"render failed: {exc}", file=sys.stderr)
             return None, effect, f"render failed: {exc}"
+        if kind == "viral" and clip_url:
+            conn.execute(
+                "UPDATE hook_clips SET used_at = ? WHERE url = ?",
+                (utc_now(), clip_url),
+            )
+            hooks.drop(clip_path)
         print(
-            f"rendered {dest.name} {plan.summary()} effect={effect} "
-            f"cues={len(section_cues)} subject_chars={len(subject)}"
+            f"rendered {dest.name} {plan.summary()} effect={effect} hook={hook_key} "
+            f"({hook_reason}) cues={len(section_cues)} subject_chars={len(subject)}"
         )
     frames = shorts.extract_qa_frames(dest, out_dir / f".qa-{dest.stem}")
     audio_n = shorts.audio_stream_count(dest)
@@ -1046,9 +1321,9 @@ def cut_one(
         """
         INSERT INTO shorts (
             source_id, layout, start_sec, end_sec, path, sha256, audio_streams,
-            status, created_at, subject, effect
+            status, created_at, subject, effect, hook
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             source_id,
@@ -1062,6 +1337,7 @@ def cut_one(
             utc_now(),
             subject,
             effect,
+            hook_key,
         ),
     )
     used.add((round(start, 2), round(end, 2)))
@@ -1114,8 +1390,10 @@ def caption_for(conn: sqlite3.Connection, short_id: int) -> tuple[str, str, list
     disclaimer = os.environ.get("YOUTUBE_DISCLAIMER", "").strip() or share.DEFAULT_DISCLAIMER
     effect = row["effect"] if "effect" in row.keys() else None
     effect_bit = f" · effect {effect}" if effect else ""
+    hook = row["hook"] if "hook" in row.keys() else None
+    hook_bit = f" · hook {hook}" if hook else ""
     description = (
-        f"{row['niche']} short · layout {row['layout']}{effect_bit}\n\n"
+        f"{row['niche']} short · layout {row['layout']}{effect_bit}{hook_bit}\n\n"
         f"Source: https://www.youtube.com/watch?v={row['youtube_id']}\n\n"
         f"{disclaimer}"
     )
@@ -1368,6 +1646,38 @@ def _effect_status_lines(conn: sqlite3.Connection) -> list[str]:
     return lines
 
 
+def _hook_status_lines(conn: sqlite3.Connection) -> list[str]:
+    lines: list[str] = []
+    niches = [r["niche"] for r in conn.execute("SELECT DISTINCT niche FROM niche_hooks ORDER BY niche")]
+    if not niches:
+        niches = [path.name for path in niche_dirs()]
+    unused = used = 0
+    if _table_cols(conn, "hook_clips"):
+        unused = conn.execute("SELECT COUNT(*) FROM hook_clips WHERE used_at IS NULL").fetchone()[0]
+        used = conn.execute("SELECT COUNT(*) FROM hook_clips WHERE used_at IS NOT NULL").fetchone()[0]
+    lines.append(f"clips on disk unused={unused} used-and-deleted={used}")
+    if not niches:
+        return lines
+    for niche in niches:
+        ensure_niche_hooks(conn, niche)
+        kinds = active_hook_names(conn, niche, "kind")
+        styles = active_hook_names(conn, niche, "style")
+        lines.append(f"- {niche} kinds: {', '.join(kinds) or 'none'}")
+        lines.append(f"  styles: {', '.join(styles) or 'none'}")
+        last = conn.execute(
+            """
+            SELECT reviewed_at, action, slug, reason FROM hook_reviews
+            WHERE niche = ? ORDER BY id DESC LIMIT 1
+            """,
+            (niche,),
+        ).fetchone()
+        if last:
+            lines.append(f"  last review: {last['reviewed_at']} · {last['action']} {last['slug']} · {last['reason']}")
+        else:
+            lines.append("  last review: never")
+    return lines
+
+
 def write_status(conn: sqlite3.Connection, summary: str) -> None:
     lines = ["# CEO status", "", f"Updated: {utc_now()}", "", summary, "", "## Projects", ""]
     projects = conn.execute(
@@ -1382,10 +1692,12 @@ def write_status(conn: sqlite3.Connection, summary: str) -> None:
         )
     lines.extend(["", "## Effects", ""])
     lines.extend(_effect_status_lines(conn))
+    lines.extend(["", "## Hooks", ""])
+    lines.extend(_hook_status_lines(conn))
     lines.extend(["", "## Recent posts", ""])
     rows = conn.execute(
         """
-        SELECT p.posted_at, p.url, p.platform_id, p.channel_title, s.layout, s.effect, src.niche, src.title,
+        SELECT p.posted_at, p.url, p.platform_id, p.channel_title, s.layout, s.effect, s.hook, src.niche, src.title,
                (SELECT views FROM reads r WHERE r.post_id = p.id ORDER BY read_at DESC LIMIT 1) AS views,
                (SELECT likes FROM reads r WHERE r.post_id = p.id ORDER BY read_at DESC LIMIT 1) AS likes
         FROM posts p
@@ -1398,15 +1710,16 @@ def write_status(conn: sqlite3.Connection, summary: str) -> None:
         lines.append("None yet.")
     for row in rows:
         effect = row["effect"] or "none"
+        hook = row["hook"] or "—"
         lines.append(
             f"- {row['posted_at']} · {row['niche']} · {row['channel_title'] or 'channel?'} · "
-            f"{row['layout']} · {effect} · views={row['views']} likes={row['likes']} · "
+            f"{row['layout']} · {effect} · {hook} · views={row['views']} likes={row['likes']} · "
             f"{row['url'] or row['platform_id']}"
         )
     lines.extend(["", "## Awaiting approval", ""])
     waiting = conn.execute(
         """
-        SELECT s.id, s.layout, s.effect, s.path, src.title, src.niche FROM shorts s
+        SELECT s.id, s.layout, s.effect, s.hook, s.path, src.title, src.niche FROM shorts s
         JOIN sources src ON src.id = s.source_id
         WHERE s.status = 'awaiting_approval'
         ORDER BY s.id
@@ -1417,7 +1730,7 @@ def write_status(conn: sqlite3.Connection, summary: str) -> None:
     for row in waiting:
         lines.append(
             f"- short {row['id']} · {row['niche']} · {row['layout']} · "
-            f"{row['effect'] or 'none'} · {row['path']} · {row['title']}"
+            f"{row['effect'] or 'none'} · {row['hook'] or '—'} · {row['path']} · {row['title']}"
         )
     lines.extend(["", "## Last decisions", ""])
     for row in conn.execute("SELECT * FROM decisions ORDER BY id DESC LIMIT 8"):
@@ -1450,9 +1763,10 @@ def cmd_review(args: argparse.Namespace) -> int:
     for path in niches:
         upsert_project(conn, path)
         note = review_effects(conn, path.name)
-        notes.append(f"{path.name}: {note}")
+        hook_note = review_hooks(conn, path.name)
+        notes.append(f"{path.name}: {note} | hooks: {hook_note}")
         print(notes[-1])
-    write_status(conn, "Effect review: " + " | ".join(notes))
+    write_status(conn, "Effect and hook review: " + " | ".join(notes))
     return 0
 
 
@@ -1523,6 +1837,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     if needs_effect_review(conn, niche.name):
         review_note = review_effects(conn, niche.name)
         print(f"effect review: {review_note}")
+    if needs_hook_review(conn, niche.name):
+        hook_review = review_hooks(conn, niche.name)
+        print(f"hook review: {hook_review}")
+        review_note = f"{review_note} | {hook_review}" if review_note else hook_review
     layout, reason = choose_layout(conn, niche.name)
     term = next_term(conn, niche.name, terms_doc["terms"])
     cur_decision = conn.execute(
@@ -1580,9 +1898,13 @@ def cmd_run(args: argparse.Namespace) -> int:
         if best
         else "no stats yet"
     )
+    hook_key = ""
+    if short_id:
+        hook_row = conn.execute("SELECT hook FROM shorts WHERE id = ?", (short_id,)).fetchone()
+        hook_key = (hook_row["hook"] if hook_row else "") or ""
     summary = (
         f"{niche.name}: channel={channel_title or 'unknown'}; layout={layout}; "
-        f"effect={effect}; short={short_id}; posted={posted}; reads={reads_n}; "
+        f"effect={effect}; hook={hook_key or '—'}; short={short_id}; posted={posted}; reads={reads_n}; "
         f"auth={auth}; {best_bits}"
     )
     conn.execute(
@@ -1601,6 +1923,56 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_hooks(args: argparse.Namespace) -> int:
+    """Download new hook clips, then delete any file that a short already used."""
+    conn = connect()
+    for path in niche_dirs():
+        ensure_niche_hooks(conn, path.name)
+    inbox = DATA / "hooks"
+    inbox.mkdir(parents=True, exist_ok=True)
+    removed = 0
+    for row in conn.execute("SELECT slug FROM hook_clips WHERE used_at IS NOT NULL"):
+        path = inbox / f"{row['slug']}.mp4"
+        if path.is_file():
+            path.unlink()
+            removed += 1
+    rows, notes = hooks.catalog()
+    have = {item["url"] for item in conn.execute("SELECT url FROM hook_clips")}
+    fresh = [item for item in rows if item["url"] not in have and not hooks.blocked(item["title"], item["slug"])]
+    limit = max(1, int(args.n))
+    saved = 0
+    if not fresh:
+        oldest = conn.execute(
+            "SELECT url, slug, title, source FROM hook_clips WHERE used_at IS NOT NULL ORDER BY used_at LIMIT ?",
+            (limit,),
+        ).fetchall()
+        for row in oldest:
+            path = inbox / f"{row['slug']}.mp4"
+            if hooks.save(row["url"], path):
+                conn.execute("UPDATE hook_clips SET used_at = NULL, fetched_at = ? WHERE url = ?", (utc_now(), row["url"]))
+                saved += 1
+        notes.append(f"no new urls; refreshed {saved} already-used clips")
+    else:
+        for item in fresh[:limit]:
+            path = inbox / f"{item['slug']}.mp4"
+            if not hooks.save(item["url"], path):
+                notes.append(f"miss {item['slug']}")
+                continue
+            conn.execute(
+                """
+                INSERT INTO hook_clips (url, source, slug, title, fetched_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (item["url"], item["source"], item["slug"], item["title"], utc_now()),
+            )
+            saved += 1
+    conn.commit()
+    print("\n".join(notes))
+    print(f"saved {saved}; removed {removed} used files")
+    write_status(conn, f"Hook download: saved {saved}, removed {removed} used files.")
+    return 0 if saved or notes else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -1617,6 +1989,8 @@ def main() -> int:
     )
     approve = sub.add_parser("approve", help="Approve and post a short id")
     approve.add_argument("short_id")
+    fetch = sub.add_parser("hooks", help="Download a fresh batch of viral hook clips")
+    fetch.add_argument("--n", type=int, default=8, help="How many new clips to bring in")
     args = parser.parse_args()
     if args.cmd == "run":
         return cmd_run(args)
@@ -1624,6 +1998,8 @@ def main() -> int:
         return cmd_status(args)
     if args.cmd == "review":
         return cmd_review(args)
+    if args.cmd == "hooks":
+        return cmd_hooks(args)
     return cmd_approve(args)
 
 

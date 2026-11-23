@@ -24,6 +24,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 import edges
+import hooks
 from render_style import resolve
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1870,12 +1871,37 @@ def composite_top(
     work: Path,
     dest: Path,
     layout: str | None = None,
+    hook: dict | None = None,
 ) -> None:
-    """Burn logo and captions onto a finished picture (after any moviepy effect).
+    """Burn the opening hook, then the logo and captions.
 
     On main-bottom (62% video), captions sit centered in the secondary art band.
+    The hook is already inside the middle 38% and stays under the logo.
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if hook is None:
+        text = " ".join(str(c.get("text") or "") for c in cues[:12])
+        rng = random.Random(text or f"{start:.2f}")
+        kind = rng.choice(("cloud", "ask"))
+        words, emphasis = hooks.phrase(text, kind, rng)
+        hook = {
+            "kind": kind,
+            "style": rng.choice(hooks.STYLES),
+            "shape": rng.choice(hooks.SHAPES),
+            "words": words,
+            "emphasis": emphasis,
+            "clip": None,
+        }
+    hooked = work / "hooked.mp4"
+    hooks.burn(
+        picture, hooked,
+        hooks.paint(
+            hook["words"], hook["style"], hook["shape"], int(hook["emphasis"]),
+            work, viral=hook["kind"] == "viral",
+        ),
+        hook.get("clip"), work,
+    )
+    picture = hooked
     duration = end - start
     logo = work / "logo.png"
     if STYLE.get("logo") == "none":
@@ -1887,6 +1913,12 @@ def composite_top(
     if logo_file:
         prepare_logo(logo_file, logo)
     band = (0, MAIN_BOTTOM_TOP) if layout == "main-bottom" else None
+    if hook and hook.get("kind") == "viral":
+        cues = [
+            {**c, "start": max(float(c["start"]), start + hooks.HOLD)}
+            for c in cues
+            if float(c["end"]) > start + hooks.HOLD
+        ]
     cap_mov = build_caption_mov(cues, start, duration, work, band=band)
     enc = video_encoder()
     inputs = ["-i", str(picture)]
@@ -1895,10 +1927,15 @@ def composite_top(
     next_idx = 1
 
     if logo_file:
-        inputs += ["-i", str(logo)]
         logo_idx = next_idx
         next_idx += 1
-        filters.append(f"[{last}][{logo_idx}:v]overlay=W-w-36:36[logoed]")
+        if hook and hook.get("kind") == "viral":
+            inputs += ["-loop", "1", "-t", f"{duration:.3f}", "-i", str(logo)]
+            filters.append(f"[{logo_idx}:v]format=rgba,fade=t=in:st=1:d=0.45:alpha=1[lg]")
+            filters.append(f"[{last}][lg]overlay=W-w-36:36:enable='gte(t,1)'[logoed]")
+        else:
+            inputs += ["-i", str(logo)]
+            filters.append(f"[{last}][{logo_idx}:v]overlay=W-w-36:36[logoed]")
         last = "logoed"
 
     if cap_mov:
