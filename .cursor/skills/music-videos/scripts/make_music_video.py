@@ -21,6 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[4]
 if str(ROOT / "tools") not in sys.path:
     sys.path.insert(0, str(ROOT / "tools"))
+import edges
 from render_style import resolve
 
 MV = ROOT / "Music Videos"
@@ -565,28 +566,7 @@ def write_ass(lines: list[dict], duration: float, w: int, h: int, dest: Path) ->
 
 def edge_cut(seed: str, depth: int) -> str:
     """Inset from the strip edge. Shape order is shuffled per video."""
-    shapes = [
-        f"abs(mod(X\\,72)-36)/36*{depth}",
-        f"if(lt(mod(X\\,72)\\,36)\\,{depth}\\,0)",
-        f"abs(X-W/2)/(W/2)*{depth}",
-        f"(sin(X*PI/80)*0.5+0.5)*{depth}",
-        f"pow(sin(X*PI/28)*0.5+0.5\\,2)*{depth}",
-        f"abs(mod(X\\,140)-70)/70*{depth}",
-        f"floor(mod(X\\,80)/20)*{depth}/4",
-        f"if(lt(mod(X\\,40)\\,12)\\,{depth}\\,0)",
-        f"abs(sin(X*PI/36))*{depth}",
-        f"if(lt(mod(X\\,90)\\,60)\\,0\\,{depth})",
-        f"(1-sqrt(max(1-pow((mod(X\\,64)-32)/32\\,2)\\,0)))*{depth}",
-        f"mod(X\\,70)/70*{depth}",
-        f"pow(abs(mod(X\\,56)-28)/28\\,3)*{depth}",
-        f"min(abs(mod(X\\,110)-55)/55*{depth}\\,{depth}*0.65)",
-    ]
-    order = list(range(len(shapes)))
-    random.Random(seed).shuffle(order)
-    cut = shapes[order[-1]]
-    for slot in range(len(shapes) - 1, -1, -1):
-        cut = f"if(eq(floor(mod(T/30\\,{len(shapes)}))\\,{slot})\\,{shapes[order[slot]]}\\,{cut})"
-    return cut.replace("X", f"(X+{random.Random(seed + '-x').randrange(8, 80)})")
+    return edges.ffmpeg_cycle(seed, depth, every=30.0)
 
 
 def ffmpeg_escape(path: Path) -> str:
@@ -669,7 +649,7 @@ def render_aspect(
         )
         prev = nxt
     if strip:
-        cut = edge_cut(f"{slug(song.name)}-{kind}", 48)
+        cut = edge_cut(f"{slug(song.name)}-{kind}", 16)
         parts.append(
             f"[{strip_i}:v]fps={FPS},scale={w}:{strip_h}:force_original_aspect_ratio=increase,"
             f"crop={w}:{strip_h}:(iw-{w})/2:(ih-{strip_h})/2,format=rgba,"

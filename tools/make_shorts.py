@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import math
+import random
 import re
 import shutil
 import subprocess
@@ -22,6 +23,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+import edges
 from render_style import resolve
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,10 +34,11 @@ LOGO_CANDIDATES = [
     ROOT / "Token Images" / "EASY.png",
     ROOT / "Token Images" / "AA-Logo[PurpleInCircle][WhiteBG][1.4][512].png",
 ]
-ART_DIRS = [
-    ROOT / "Gudasol Fractal Art",
-    ROOT / "Gudasol Sacred Geometry Art",
-]
+FRACTAL_DIR = ROOT / "Gudasol Fractal Art"
+SACRED_DIR = ROOT / "Gudasol Sacred Geometry Art"
+ART_DIRS = [FRACTAL_DIR, SACRED_DIR]
+# 11k sacred masters are fine after a downscale; raise PIL's bomb guard for them.
+Image.MAX_IMAGE_PIXELS = max(getattr(Image, "MAX_IMAGE_PIXELS", 0) or 0, 200_000_000)
 FACE_SWIFT = Path(__file__).resolve().parent / "detect_faces.swift"
 FACE_BIN = Path(__file__).resolve().parent / "detect_faces"
 FONT_PATHS = [
@@ -213,16 +216,26 @@ def render_caption_png(text: str, dest: Path, max_width: int = 980) -> Image.Ima
     return img
 
 
-def render_caption_frame(text: str, dest: Path) -> None:
+def render_caption_frame(
+    text: str,
+    dest: Path,
+    band: tuple[int, int] | None = None,
+) -> None:
+    """Place caption bar. band=(y0,y1) centers it in that vertical strip (main-bottom art)."""
     frame = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     bar = render_caption_png(text, dest.with_suffix(".bar.png"))
     x = (W - bar.width) // 2
-    place = STYLE.get("caption_place") or {}
-    if place.get("at") == "center":
-        y = int(round(H * float(place["center"]) - bar.height / 2))
-        y = max(0, min(H - bar.height, y))
+    if band is not None:
+        y0, y1 = band
+        y = y0 + max(0, (y1 - y0 - bar.height) // 2)
+        y = max(y0, min(y1 - bar.height, y))
     else:
-        y = H - bar.height - 220
+        place = STYLE.get("caption_place") or {}
+        if place.get("at") == "center":
+            y = int(round(H * float(place["center"]) - bar.height / 2))
+            y = max(0, min(H - bar.height, y))
+        else:
+            y = H - bar.height - 220
     frame.paste(bar, (x, y), bar)
     dest.parent.mkdir(parents=True, exist_ok=True)
     frame.save(dest)
@@ -498,9 +511,21 @@ def subject_crop_x(frame_path: Path, src_w: int, src_h: int) -> int:
     return max(0, min(int(src_w - crop_w), x))
 
 
-MAIN_BOTTOM_TOP = 840
-MAIN_BOTTOM_SPEAKER = 1080
+# Face + art mashup: video takes 62% of the short height.
+MAIN_BOTTOM_SPEAKER = int(round(H * 0.62)) // 2 * 2  # 1190
+MAIN_BOTTOM_TOP = H - MAIN_BOTTOM_SPEAKER  # 730
 CUTAWAY_BAND = 640
+# Sacred cover starts larger than the display on both axes, then keeps growing.
+SACRED_MIN_OVER = 1.08
+SACRED_EXPAND = 1.20
+ART_FPS = 12
+ART_SLOT = 15.0
+ART_CHANCE = 0.30
+GLITCH_SECS = 0.5
+SYMBOL_SECS = 0.8
+# Per short: chance the sacred-geometry symbols from the music videos pop in at random times.
+SYMBOL_VIDEO_CHANCE = 0.45
+COLOR_FX = ("kaleido", "prism", "wedges", "hue")
 
 
 @dataclass
@@ -542,15 +567,8 @@ def video_encoder() -> list[str]:
 
 
 def prepare_support_still(src: Path, dest: Path, band_h: int) -> None:
-    im = Image.open(src).convert("RGB")
-    scale = max(W / im.width, band_h / im.height)
-    nw, nh = max(W, int(im.width * scale)), max(band_h, int(im.height * scale))
-    im = im.resize((nw, nh), Image.Resampling.LANCZOS)
-    left = max(0, (nw - W) // 2)
-    top = max(0, (nh - band_h) // 2)
-    im = im.crop((left, top, left + W, top + band_h))
     dest.parent.mkdir(parents=True, exist_ok=True)
-    im.save(dest, quality=92)
+    _cover_rgb(src, W, band_h).save(dest, quality=92)
 
 
 def cutaway_spans(words: list[dict], start: float, end: float, max_spans: int = 2) -> list[tuple[float, float]]:
@@ -612,19 +630,39 @@ def extract_qa_frames(video: Path, dest_dir: Path) -> list[Path]:
     return frames
 
 
-def list_art() -> list[Path]:
-    files: list[Path] = []
-    for folder in ART_DIRS:
-        if not folder.is_dir():
-            continue
-        files.extend(p for p in folder.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"})
-    # Prefer the 2k masters; 11k prints are too heavy to stamp as a background.
+def _list_images(folder: Path, allow_11k: bool = False) -> list[Path]:
+    if not folder.is_dir():
+        return []
+    files = [p for p in folder.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}]
+    if allow_11k:
+        return sorted(files)
     compact = [p for p in files if "[11k]" not in p.name]
     return sorted(compact or files)
 
 
-def pick_art(seed: str) -> Path | None:
-    files = list_art()
+def list_fractal_art() -> list[Path]:
+    return _list_images(FRACTAL_DIR, allow_11k=False)
+
+
+def list_sacred_art() -> list[Path]:
+    # Sacred masters are PNG 11k prints now; include them and downscale on use.
+    return _list_images(SACRED_DIR, allow_11k=True)
+
+
+def list_art() -> list[Path]:
+    return list_fractal_art() + list_sacred_art()
+
+
+def is_sacred(path: Path | None) -> bool:
+    if path is None:
+        return False
+    try:
+        return path.resolve().is_relative_to(SACRED_DIR.resolve())
+    except (ValueError, AttributeError):
+        return SACRED_DIR.name in path.parts
+
+
+def _pick_from(files: list[Path], seed: str) -> Path | None:
     if not files:
         return None
     acc = 0
@@ -633,16 +671,425 @@ def pick_art(seed: str) -> Path | None:
     return files[acc % len(files)]
 
 
-def prepare_art_bg(src: Path, dest: Path) -> None:
-    im = Image.open(src).convert("RGB")
-    scale = max(W / im.width, H / im.height)
-    nw, nh = max(W, int(im.width * scale)), max(H, int(im.height * scale))
+def pick_art(seed: str) -> Path | None:
+    return _pick_from(list_art(), seed)
+
+
+def pick_art_stack(seed: str) -> tuple[Path | None, Path | None]:
+    """Fractal underlay + optional sacred overlay. Sacred always gets a fractal under it."""
+    sacred = _pick_from(list_sacred_art(), seed + "-sacred")
+    fractal = _pick_from(list_fractal_art(), seed + "-fractal")
+    if sacred and fractal:
+        return fractal, sacred
+    if sacred and not fractal:
+        return sacred, None
+    return fractal, None
+
+
+def _cover_rgb(src: Path, tw: int, th: int) -> Image.Image:
+    im = Image.open(src)
+    if im.mode in {"RGBA", "LA", "P"}:
+        rgba = im.convert("RGBA")
+        base = Image.new("RGB", rgba.size, (0, 0, 0))
+        base.paste(rgba, mask=rgba.split()[-1])
+        im = base
+    else:
+        im = im.convert("RGB")
+    # Cap decode work on 11k masters before the cover scale.
+    longest = max(im.size)
+    if longest > 4096:
+        shrink = 4096 / longest
+        im = im.resize(
+            (max(2, int(im.width * shrink) // 2 * 2), max(2, int(im.height * shrink) // 2 * 2)),
+            Image.Resampling.LANCZOS,
+        )
+    scale = max(tw / im.width, th / im.height)
+    nw, nh = max(tw, int(im.width * scale)), max(th, int(im.height * scale))
     im = im.resize((nw, nh), Image.Resampling.LANCZOS)
-    left = max(0, (nw - W) // 2)
-    top = max(0, (nh - H) // 2)
-    im = im.crop((left, top, left + W, top + H))
+    left = max(0, (nw - tw) // 2)
+    top = max(0, (nh - th) // 2)
+    return im.crop((left, top, left + tw, top + th))
+
+
+def _fit_rgba(src: Path, tw: int, th: int) -> Image.Image:
+    """Sacred pattern covering the frame: both edges >= display after center crop.
+
+    PNG masters store geometry mostly in alpha on near-black RGB. Rebuild as
+    soft-white ink so fractal color shows through. Zoompan then starts above 1.0
+    so the visible pattern is already larger than the display and keeps growing.
+    """
+    import numpy as np
+
+    im = Image.open(src).convert("RGBA")
+    longest = max(im.size)
+    if longest > 4096:
+        shrink = 4096 / longest
+        im = im.resize(
+            (max(2, int(im.width * shrink) // 2 * 2), max(2, int(im.height * shrink) // 2 * 2)),
+            Image.Resampling.LANCZOS,
+        )
+    # Cover: both scaled edges are at least the display size.
+    scale = max(tw / im.width, th / im.height)
+    nw = max(tw, int(im.width * scale) // 2 * 2)
+    nh = max(th, int(im.height * scale) // 2 * 2)
+    im = im.resize((nw, nh), Image.Resampling.LANCZOS)
+    left = max(0, (nw - tw) // 2)
+    top = max(0, (nh - th) // 2)
+    im = im.crop((left, top, left + tw, top + th))
+    arr = np.asarray(im)
+    alpha = arr[:, :, 3].astype(np.float32)
+    lum = arr[:, :, :3].mean(axis=2)
+    ink = alpha * (0.55 + 0.45 * ((255.0 - lum) / 255.0))
+    lo = float(np.percentile(ink, 8))
+    hi = float(np.percentile(ink, 96))
+    if hi <= lo + 1:
+        stretched = ink
+    else:
+        stretched = (ink - lo) * (255.0 / (hi - lo))
+    stretched = np.clip(stretched * 0.72, 0, 210)
+    stretched[stretched < 10] = 0
+    out = np.zeros((th, tw, 4), dtype=np.uint8)
+    out[:, :, 0] = 250
+    out[:, :, 1] = 250
+    out[:, :, 2] = 250
+    out[:, :, 3] = stretched.astype(np.uint8)
+    return Image.fromarray(out, "RGBA")
+
+
+def prepare_art_bg(src: Path, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    im.save(dest, quality=92)
+    _cover_rgb(src, W, H).save(dest, quality=92)
+
+
+def _hue_rotate(rgb, deg: float):
+    import numpy as np
+
+    a = np.deg2rad(deg)
+    c, s = float(np.cos(a)), float(np.sin(a))
+    m = np.array(
+        [
+            [0.213 + c * 0.787 - s * 0.213, 0.715 - c * 0.715 - s * 0.715, 0.072 - c * 0.072 + s * 0.928],
+            [0.213 - c * 0.213 + s * 0.143, 0.715 + c * 0.285 + s * 0.140, 0.072 - c * 0.072 - s * 0.283],
+            [0.213 - c * 0.213 - s * 0.787, 0.715 - c * 0.715 + s * 0.715, 0.072 + c * 0.928 + s * 0.072],
+        ],
+        dtype=np.float32,
+    )
+    out = rgb.astype(np.float32) @ m.T
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def _color_sacred(rgba, t: float):
+    """Six saturated color wedges on the sacred ink. Geometry stays; hues spin."""
+    import colorsys
+    import numpy as np
+
+    h, w = rgba.shape[:2]
+    yy, xx = np.mgrid[0:h, 0:w]
+    ang = np.arctan2(yy - h / 2, xx - w / 2)
+    spin = t * 0.08
+    sector = np.floor(((ang + np.pi) / (2 * np.pi) * 6 + spin) % 6).astype(np.int32)
+    colored = np.zeros((h, w, 3), dtype=np.uint8)
+    veil = np.zeros((h, w, 4), dtype=np.uint8)
+    for k in range(6):
+        mask = sector == k
+        if not mask.any():
+            continue
+        r, g, b = colorsys.hsv_to_rgb(((k / 6.0) + spin) % 1.0, 0.92, 1.0)
+        swatch = (int(r * 255), int(g * 255), int(b * 255))
+        colored[mask] = swatch
+        veil[mask, 0] = swatch[0]
+        veil[mask, 1] = swatch[1]
+        veil[mask, 2] = swatch[2]
+        veil[mask, 3] = 70
+    out = np.zeros_like(rgba)
+    out[:, :, :3] = colored
+    ink = rgba[:, :, 3].astype(np.float32)
+    out[:, :, 3] = np.clip(ink * 1.35, 0, 230).astype(np.uint8)
+    # Veil sits in the clear gaps so the kaleidoscope reads even on thin linework.
+    clear = out[:, :, 3] < 24
+    out[clear] = veil[clear]
+    return out
+
+
+def _kaleido(rgb, n: int = 6):
+    import numpy as np
+
+    h, w = rgb.shape[:2]
+    yy, xx = np.mgrid[0:h, 0:w]
+    cy, cx = (h - 1) / 2, (w - 1) / 2
+    ang = np.arctan2(yy - cy, xx - cx)
+    rad = np.hypot(yy - cy, xx - cx)
+    sector = np.pi / n
+    ang = np.abs(np.mod(ang, 2 * sector) - sector)
+    sx = np.clip((cx + rad * np.cos(ang)).astype(np.int32), 0, w - 1)
+    sy = np.clip((cy + rad * np.sin(ang)).astype(np.int32), 0, h - 1)
+    return rgb[sy, sx]
+
+
+def _prism(rgb, shift: int):
+    import numpy as np
+
+    out = rgb.copy()
+    out[:, :, 0] = np.roll(rgb[:, :, 0], shift, axis=1)
+    out[:, :, 2] = np.roll(rgb[:, :, 2], -shift, axis=1)
+    return out
+
+
+def _wedges(rgb, t: float):
+    import numpy as np
+
+    h, w = rgb.shape[:2]
+    yy, xx = np.mgrid[0:h, 0:w]
+    ang = np.arctan2(yy - h / 2, xx - w / 2)
+    sector = np.floor(((ang + np.pi) / (2 * np.pi) * 6 + t * 0.2) % 6).astype(np.int32)
+    out = rgb.astype(np.float32)
+    for k in range(6):
+        mask = sector == k
+        tint = _hue_rotate(np.full((1, 1, 3), 255, dtype=np.uint8), k * 60 + t * 30)
+        out[mask] = out[mask] * 0.55 + tint.astype(np.float32)[0, 0] * 0.45
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def _apply_edge(rgb, name: str, t: float):
+    """Cut a thin top and bottom fringe with one shared edge shape."""
+    import numpy as np
+
+    h, w = rgb.shape[:2]
+    depth = edges.fringe_px(h)
+    cut = (edges.unit(name, np.arange(w), t) * depth).astype(np.int32)
+    yy = np.arange(h)[:, None]
+    outside = (yy < cut[None, :]) | (yy > h - 1 - cut[None, :])
+    out = rgb.astype(np.float32)
+    out[outside] *= 0.12
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def _tint_sacred(rgba, hue: float):
+    import colorsys
+    import numpy as np
+
+    r, g, b = colorsys.hsv_to_rgb((hue % 360) / 360.0, 0.85, 1.0)
+    out = np.zeros_like(rgba)
+    out[:, :, 0] = int(r * 255)
+    out[:, :, 1] = int(g * 255)
+    out[:, :, 2] = int(b * 255)
+    out[:, :, 3] = np.clip(rgba[:, :, 3].astype(np.float32) * 1.25, 0, 220).astype(np.uint8)
+    return out
+
+
+def _hold_fx(rgb, name: str, t: float, t0: float):
+    if name == "kaleido":
+        spun = _hue_rotate(rgb, (t - t0) * 28)
+        return _kaleido(spun, 6)
+    if name == "prism":
+        return _prism(rgb, 8 + int((t - t0) * 6) % 24)
+    if name == "wedges":
+        return _wedges(rgb, t)
+    return _hue_rotate(rgb, (t - t0) * 36)
+
+
+def _glitch_rgba(rgba, t: float):
+    import numpy as np
+
+    out = rgba.copy()
+    rng = random.Random(int(t * 48) + 7)
+    h, w = out.shape[:2]
+    for _ in range(6):
+        y = rng.randint(0, max(1, h - 10))
+        hh = rng.randint(3, 14)
+        y1 = min(h, y + hh)
+        xoff = rng.randint(-36, 36)
+        band = out[y:y1].copy()
+        out[y:y1] = 0
+        if xoff >= 0:
+            out[y:y1, xoff:] = band[:, : w - xoff]
+        elif xoff < 0:
+            out[y:y1, : w + xoff] = band[:, -xoff:]
+    # Channel tear so the glitch reads as color, not just a shift.
+    tear = rng.randint(6, 22)
+    out[:, :, 0] = np.roll(out[:, :, 0], tear, axis=1)
+    return out
+
+
+def _zoom_center(rgba, z: float):
+    """Scale up and center-crop so the overlay stays larger than the frame."""
+    h, w = rgba.shape[:2]
+    im = Image.fromarray(rgba, "RGBA")
+    nw = max(w + 2, int(w * z) // 2 * 2)
+    nh = max(h + 2, int(h * z) // 2 * 2)
+    im = im.resize((nw, nh), Image.Resampling.BILINEAR)
+    left = (nw - w) // 2
+    top = (nh - h) // 2
+    return np_rgba(im.crop((left, top, left + w, top + h)))
+
+
+def np_rgba(im: Image.Image):
+    import numpy as np
+
+    return np.asarray(im.convert("RGBA"))
+
+
+def _over(base, rgba, opacity: float = 1.0):
+    import numpy as np
+
+    a = (rgba[:, :, 3:4].astype(np.float32) / 255.0) * opacity
+    return np.clip(
+        rgba[:, :, :3].astype(np.float32) * a + base.astype(np.float32) * (1.0 - a),
+        0,
+        255,
+    ).astype(np.uint8)
+
+
+def _art_plan(seed: str, duration: float) -> tuple[list[dict], list[float], bool]:
+    """Per short, shuffle the music-video edge shapes. Each 15s uses the next one.
+
+    Separately, 30% of slots also take a color effect for the full 15s, and 30%
+    flash a 0.5s glitch symbol.
+    """
+    rng = random.Random(seed)
+    order = edges.shuffle(seed)
+    slots: list[dict] = []
+    t = 0.0
+    while t < duration - 0.05:
+        span = min(ART_SLOT, duration - t)
+        glitch = rng.random() < ART_CHANCE
+        hold = rng.choice(COLOR_FX) if rng.random() < ART_CHANCE else None
+        at = None
+        if glitch and span > GLITCH_SECS + 0.4:
+            at = rng.uniform(t + 0.25, t + span - GLITCH_SECS - 0.05)
+        slots.append({
+            "t0": t,
+            "t1": t + span,
+            "edge": order[len(slots) % len(order)],
+            "hold": hold,
+            "glitch": at,
+        })
+        t += ART_SLOT
+    symbols = rng.random() < SYMBOL_VIDEO_CHANCE
+    pops: list[float] = []
+    if symbols:
+        cursor = rng.uniform(1.2, 4.0)
+        while cursor < duration - SYMBOL_SECS:
+            pops.append(cursor)
+            cursor += rng.uniform(7.0, 16.0)
+    return slots, pops, symbols
+
+
+def _encode_rgb(frames, dest: Path, width: int, height: int, fps: int, duration: float) -> None:
+    enc = video_encoder()
+    proc = subprocess.Popen(
+        [
+            "ffmpeg", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
+            "-s", f"{width}x{height}", "-r", str(fps), "-i", "-",
+            *enc, "-pix_fmt", "yuv420p", "-an",
+            "-t", f"{duration:.3f}", "-movflags", "+faststart", str(dest),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    assert proc.stdin is not None
+    try:
+        for frame in frames:
+            proc.stdin.write(frame.tobytes())
+    finally:
+        proc.stdin.close()
+    err = proc.stderr.read() if proc.stderr else b""
+    code = proc.wait()
+    if code != 0:
+        raise subprocess.CalledProcessError(code, "ffmpeg", stderr=err)
+
+
+def build_art_backdrop(
+    duration: float,
+    work: Path,
+    seed: str,
+    width: int = W,
+    height: int = H,
+    fractal: Path | None = None,
+    sacred: Path | None = None,
+) -> Path:
+    """Centered fractal underlay; when sacred is set, slow-expand it on top."""
+    work.mkdir(parents=True, exist_ok=True)
+    if fractal is None and sacred is None:
+        fractal, sacred = pick_art_stack(seed)
+    elif sacred is not None and fractal is None and is_sacred(sacred):
+        fractal = _pick_from(list_fractal_art(), seed + "-under")
+    elif fractal is None and sacred is None:
+        fractal = pick_art(seed)
+
+    under = fractal or sacred
+    if under is None:
+        raise FileNotFoundError("no fractal or sacred art for backdrop")
+
+    dest = work / f"art-backdrop-{width}x{height}.mp4"
+    import numpy as np
+
+    base = np.asarray(_cover_rgb(under if fractal else under, width, height).convert("RGB"))
+    sacred_rgba = None
+    if sacred is not None and is_sacred(sacred):
+        sacred_rgba = np_rgba(_fit_rgba(sacred, width, height))
+    geos = list_sacred_art()
+    if sacred is not None:
+        geos = [p for p in geos if p.resolve() != sacred.resolve()]
+    slots, pops, symbols_on = _art_plan(f"{seed}-{width}x{height}", duration)
+    notes = [
+        f"{s['t0']:.0f}s {s['edge']}"
+        + (f"+{s['hold']}" if s["hold"] else "")
+        + (" glitch" if s["glitch"] is not None else "")
+        for s in slots
+    ]
+    print(
+        f"  art {width}x{height}: symbols={symbols_on} pops={len(pops)} | " + "; ".join(notes),
+        flush=True,
+    )
+    cache: dict[str, object] = {}
+
+    def symbol_layer(path: Path, t: float, glitch: bool):
+        key = str(path)
+        if key not in cache:
+            cache[key] = np_rgba(_fit_rgba(path, width, height))
+        layer = cache[key]
+        if glitch:
+            layer = _glitch_rgba(layer, t)
+        return _tint_sacred(layer, (t * 40) % 360)
+
+    def frames():
+        count = max(1, int(round(duration * ART_FPS)))
+        for i in range(count):
+            t = i / ART_FPS
+            frame = base
+            slot = next((s for s in slots if s["t0"] <= t < s["t1"]), slots[-1] if slots else None)
+            if sacred_rgba is not None:
+                z = SACRED_MIN_OVER + (SACRED_EXPAND - SACRED_MIN_OVER) * min(
+                    1.0, t / max(duration, 0.01)
+                )
+                hue = edges.NAMES.index(slot["edge"]) * (360 / len(edges.NAMES)) if slot else 40
+                frame = _over(frame, _tint_sacred(_zoom_center(sacred_rgba, z), hue + t * 12), 0.9)
+            if slot and slot["hold"]:
+                frame = _hold_fx(frame, slot["hold"], t, slot["t0"])
+            elif slot:
+                frame = _apply_edge(frame, slot["edge"], t)
+            if (
+                slot
+                and slot["glitch"] is not None
+                and geos
+                and slot["glitch"] <= t < slot["glitch"] + GLITCH_SECS
+            ):
+                frame = _over(frame, symbol_layer(geos[int(slot["glitch"]) % len(geos)], t, True), 0.9)
+            if geos and symbols_on:
+                for pop in pops:
+                    if pop <= t < pop + SYMBOL_SECS:
+                        frame = _over(
+                            frame,
+                            symbol_layer(geos[int(pop * 3) % len(geos)], t, False),
+                            0.62,
+                        )
+                        break
+            yield frame
+
+    _encode_rgb(frames(), dest, width, height, ART_FPS, duration)
+    return dest
 
 
 def ensure_face_bin() -> Path:
@@ -952,7 +1399,12 @@ def plan_framing(
     rows = detect_faces_dir(frames_dir)
     samples = samples_from_detections(rows, sample_fps, src_w, src_h, use_body=True)
     face_samples = samples_from_detections(rows, sample_fps, src_w, src_h, use_body=False)
-    art = pick_art(seed) if landscape else None
+    art = (
+        _pick_from(list_sacred_art(), seed)
+        or _pick_from(list_fractal_art(), seed)
+        if landscape
+        else None
+    )
 
     if not samples:
         x = int((src_w - crop_w) / 2)
@@ -1158,7 +1610,13 @@ def prepare_logo(src: Path, dest: Path, target_w: int = 168) -> None:
     im.save(dest)
 
 
-def build_caption_mov(cues: list[dict], start: float, duration: float, work: Path) -> Path | None:
+def build_caption_mov(
+    cues: list[dict],
+    start: float,
+    duration: float,
+    work: Path,
+    band: tuple[int, int] | None = None,
+) -> Path | None:
     local = []
     for cue in cues:
         a = max(0.0, cue["start"] - start)
@@ -1187,7 +1645,7 @@ def build_caption_mov(cues: list[dict], start: float, duration: float, work: Pat
         if cue["start"] > t:
             add(blank, cue["start"] - t)
         png = work / f"cap_{n:04d}.png"
-        render_caption_frame(cue["text"], png)
+        render_caption_frame(cue["text"], png, band=band)
         add(png, cue["end"] - cue["start"])
         t = cue["end"]
     if t < duration:
@@ -1211,13 +1669,29 @@ def _support_is_still(path: Path) -> bool:
     return path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}
 
 
-def _support_inputs(support: Path, duration: float, band_h: int, work: Path) -> tuple[list[str], str]:
-    """Return ffmpeg input args and a filter that produces a [support] band of W x band_h."""
+def _support_inputs(
+    support: Path,
+    duration: float,
+    band_h: int,
+    work: Path,
+    seed: str = "support",
+) -> tuple[list[str], str]:
+    """Return ffmpeg input args and a filter that produces a [support] band of W x band_h.
+
+    Still art: fractal under sacred (slow expand) when the pick is sacred geometry.
+    """
     if _support_is_still(support):
-        still = work / "support-band.jpg"
-        prepare_support_still(support, still, band_h)
+        if is_sacred(support):
+            fractal = _pick_from(list_fractal_art(), seed + "-under")
+            sacred = support
+        else:
+            fractal, sacred = support, None
+        backdrop = build_art_backdrop(
+            duration, work / "support-art", seed,
+            width=W, height=band_h, fractal=fractal, sacred=sacred,
+        )
         return (
-            ["-loop", "1", "-t", f"{duration:.3f}", "-i", str(still)],
+            ["-i", str(backdrop)],
             f"[1:v]scale={W}:{band_h}:flags=lanczos,setsar=1[support]",
         )
     return (
@@ -1264,10 +1738,26 @@ def render_picture(
     filters: list[str] = []
 
     if plan.mode == "main-bottom":
-        support = plan.support or plan.art or pick_art(f"{video.stem}-support") or pick_logo()
+        # Prefer sacred-on-fractal for the art pane; fall back to a support clip or fractal.
+        fractal, sacred = pick_art_stack(f"{video.stem}-mb-{start:.1f}")
+        support = plan.support
+        if support is None:
+            support = sacred or fractal or plan.art or pick_logo()
         if support is None:
             raise FileNotFoundError("main-bottom needs a support still or video")
-        support_args, support_filter = _support_inputs(support, duration, MAIN_BOTTOM_TOP, work)
+        if _support_is_still(support) and sacred and fractal:
+            backdrop = build_art_backdrop(
+                duration, work / "mb-art", f"{video.stem}-mb-{start:.1f}",
+                width=W, height=MAIN_BOTTOM_TOP, fractal=fractal, sacred=sacred,
+            )
+            support_args, support_filter = (
+                ["-i", str(backdrop)],
+                f"[1:v]scale={W}:{MAIN_BOTTOM_TOP}:flags=lanczos,setsar=1[support]",
+            )
+        else:
+            support_args, support_filter = _support_inputs(
+                support, duration, MAIN_BOTTOM_TOP, work, seed=f"{video.stem}-mb",
+            )
         inputs += support_args
         filters.append(support_filter)
         full_plan = FramingPlan(
@@ -1280,7 +1770,7 @@ def render_picture(
             tracked = plan_framing(video, start, end, src_w, src_h, work / "mb-faces", seed=f"{video.stem}-mb")
             if tracked.crop_keys:
                 full_plan.crop_keys = tracked.crop_keys
-        # Speaker pane is 1080 tall so the face stays in the lower half of the short.
+        # Speaker pane is 62% of the short so the face reads as the main half.
         filters.append(
             _face_crop_filter(
                 video, start, duration, src_w, src_h, full_plan, work, MAIN_BOTTOM_SPEAKER
@@ -1288,13 +1778,23 @@ def render_picture(
         )
         filters.append("[support][speaker]vstack=inputs=2[vout]")
     elif plan.mode == "letterbox":
-        art_src = plan.art or pick_art(video.stem) or pick_logo()
-        art_png = work / "art.jpg"
-        prepare_art_bg(art_src, art_png)
+        fractal, sacred = pick_art_stack(f"{video.stem}-letterbox-{start:.1f}")
+        if plan.art:
+            if is_sacred(plan.art):
+                sacred = plan.art
+                fractal = fractal or _pick_from(list_fractal_art(), f"{video.stem}-under")
+            else:
+                fractal = plan.art
+        if fractal is None and sacred is None:
+            raise FileNotFoundError("letterbox needs fractal or sacred art")
+        backdrop = build_art_backdrop(
+            duration, work / "lb-art", f"{video.stem}-lb-{start:.1f}",
+            width=W, height=H, fractal=fractal, sacred=sacred,
+        )
         vid_h = int(round(W * src_h / src_w))
         if vid_h % 2:
             vid_h -= 1
-        inputs += ["-i", str(art_png)]
+        inputs += ["-i", str(backdrop)]
         filters = [
             f"[0:v]scale={W}:{vid_h}:flags=lanczos,setsar=1[vid]",
             f"[1:v]scale={W}:{H}:flags=lanczos,setsar=1[bg]",
@@ -1321,12 +1821,28 @@ def render_picture(
         )
         last = "base"
         if plan.mode == "cutaway":
-            support = plan.support or plan.art or pick_art(f"{video.stem}-cutaway") or pick_logo()
+            fractal, sacred = pick_art_stack(f"{video.stem}-cutaway-{start:.1f}")
+            support = plan.support
+            if support is None:
+                support = sacred or fractal or plan.art or pick_logo()
             if support is None:
                 raise FileNotFoundError("cutaway needs a support still or video")
-            support_args, support_filter = _support_inputs(support, duration, CUTAWAY_BAND, work)
+            if _support_is_still(support) and sacred and fractal:
+                backdrop = build_art_backdrop(
+                    duration, work / "cut-art", f"{video.stem}-cut-{start:.1f}",
+                    width=W, height=CUTAWAY_BAND, fractal=fractal, sacred=sacred,
+                )
+                support_args, support_filter = (
+                    ["-i", str(backdrop)],
+                    f"[1:v]scale={W}:{CUTAWAY_BAND}:flags=lanczos,setsar=1[band]",
+                )
+            else:
+                support_args, support_filter = _support_inputs(
+                    support, duration, CUTAWAY_BAND, work, seed=f"{video.stem}-cut",
+                )
+                support_filter = support_filter.replace("[support]", "[band]")
             inputs += support_args
-            filters.append(support_filter.replace("[support]", "[band]"))
+            filters.append(support_filter)
             spans = plan.cutaways or []
             if spans:
                 enable = "+".join(f"between(t\\,{a:.3f}\\,{b:.3f})" for a, b in spans)
@@ -1353,8 +1869,12 @@ def composite_top(
     end: float,
     work: Path,
     dest: Path,
+    layout: str | None = None,
 ) -> None:
-    """Burn logo and captions onto a finished picture (after any moviepy effect)."""
+    """Burn logo and captions onto a finished picture (after any moviepy effect).
+
+    On main-bottom (62% video), captions sit centered in the secondary art band.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
     duration = end - start
     logo = work / "logo.png"
@@ -1366,7 +1886,8 @@ def composite_top(
         logo_file = pick_logo()
     if logo_file:
         prepare_logo(logo_file, logo)
-    cap_mov = build_caption_mov(cues, start, duration, work)
+    band = (0, MAIN_BOTTOM_TOP) if layout == "main-bottom" else None
+    cap_mov = build_caption_mov(cues, start, duration, work, band=band)
     enc = video_encoder()
     inputs = ["-i", str(picture)]
     filters: list[str] = []
@@ -1408,7 +1929,8 @@ def composite_top(
 def render_short(video: Path, start: float, end: float, cues: list[dict], plan: FramingPlan, work: Path, dest: Path) -> None:
     picture = work / "picture.mp4"
     render_picture(video, start, end, plan, work, picture)
-    composite_top(picture, cues, start, end, work, dest)
+    layout = "main-bottom" if plan.mode == "main-bottom" else None
+    composite_top(picture, cues, start, end, work, dest, layout=layout)
 
 
 def plan_layout(

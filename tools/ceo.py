@@ -1019,7 +1019,9 @@ def cut_one(
             effected = work / "effected.mp4"
             preset = fxcat.preset_by_slug(effect) or {"params": {}}
             fxcat.apply(picture, effected, effect, dict(preset.get("params") or {}))
-            shorts.composite_top(effected, section_cues, start, end, work, dest)
+            shorts.composite_top(
+                effected, section_cues, start, end, work, dest, layout=layout,
+            )
         except Exception as exc:
             print(f"render failed: {exc}", file=sys.stderr)
             return None, effect, f"render failed: {exc}"

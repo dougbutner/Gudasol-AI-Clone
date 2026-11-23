@@ -72,7 +72,7 @@ python ".cursor/skills/music-videos/scripts/make_music_video.py" --video "/Volum
 
 Captions lagging the vocal: set `"shift": -2.0` in the lyrics JSON (seconds; negative = earlier). Pass `--shift -2.0` to write it.
 
-Art: `Gudasol Fractal Art/` is a strip behind captions at **62% opacity**, centered at 61.8% down. Scale it up and center-crop to the strip; do not stretch it. Its top and bottom edge changes every 30 seconds through 14 shapes (saw, squares, triangle, wave, scallop, wide diamond, stairs, narrow gaps, double peak, battlement, semicircle, ramp, spike, flat diamond). Shuffle that order per video so two songs do not share a sequence. Fractals + sacred geometry (skip `[11k]` PNGs) flash as 1–3s overlays every ~10–15s on commas and lyric pauses. Same center-crop for those full-frame flashes.
+Art: `Gudasol Fractal Art/` is a strip behind captions at **62% opacity**, centered at 61.8% down. Scale it up and center-crop to the strip; do not stretch it. Its top and bottom edge changes every 30 seconds through the shared catalog in `tools/edges.py` (fine saws, waves, stairs, lace, cusps, braid, and the rest). The fringe stays about 16 pixels. Shuffle that order per video so two songs do not share a sequence. Fractals + sacred geometry (skip `[11k]` PNGs) flash as 1–3s overlays every ~10–15s on commas and lyric pauses. Same center-crop for those full-frame flashes.
 
 ```bash
 python ".cursor/skills/music-videos/scripts/make_music_video.py" --status
