@@ -1,8 +1,8 @@
 # CEO status
 
-Updated: 2026-11-23T23:33:34+00:00
+Updated: 2026-11-24T08:55:42+00:00
 
-Gudasol: no source available this run (auth=blocked; channel=unknown).
+Aquarius Academy: no source available this run (auth=blocked; channel=unknown).
 
 ## Projects
 
@@ -25,7 +25,7 @@ Gudasol: no source available this run (auth=blocked; channel=unknown).
 clips on disk unused=4 used-and-deleted=2
 - Aquarius Academy kinds: ask, cloud, viral
   styles: invert, marker, neon, pill, shadow, stroke
-  last review: never
+  last review: 2026-11-24T08:55:40+00:00 · keep hook · no hook retire this week
 - Gudasol kinds: ask, cloud, viral
   styles: invert, marker, neon, pill, shadow, stroke
   last review: 2026-11-23T23:33:32+00:00 · keep hook · no hook retire this week
@@ -48,11 +48,11 @@ None yet.
 
 ## Last decisions
 
+- 2026-11-24T08:55:40+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
+- 2026-11-24T08:55:40+00:00 · Aquarius Academy · — · hook review: no hook retire this week
 - 2026-11-23T23:33:32+00:00 · Gudasol · full · rotate to full until each arm has 4 posts with a 24h read
 - 2026-11-23T23:33:32+00:00 · Gudasol · — · hook review: no hook retire this week
 - 2026-11-23T06:23:09+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
 - 2026-11-22T23:23:28+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
 - 2026-11-22T14:16:21+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
 - 2026-11-22T05:39:45+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
-- 2026-11-21T18:49:54+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
-- 2026-11-21T18:04:14+00:00 · Gudasol · — · none · effect review: no retire this week; none_samples=0; active=none,cool,fade-in,lift-contrast,warm
