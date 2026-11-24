@@ -1,8 +1,8 @@
 # CEO status
 
-Updated: 2026-11-24T08:55:42+00:00
+Updated: 2026-11-24T22:03:00+00:00
 
-Aquarius Academy: no source available this run (auth=blocked; channel=unknown).
+Gudasol: no source available this run (auth=blocked; channel=unknown).
 
 ## Projects
 
@@ -48,6 +48,7 @@ None yet.
 
 ## Last decisions
 
+- 2026-11-24T22:02:57+00:00 · Gudasol · full · rotate to full until each arm has 4 posts with a 24h read
 - 2026-11-24T08:55:40+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
 - 2026-11-24T08:55:40+00:00 · Aquarius Academy · — · hook review: no hook retire this week
 - 2026-11-23T23:33:32+00:00 · Gudasol · full · rotate to full until each arm has 4 posts with a 24h read
@@ -55,4 +56,3 @@ None yet.
 - 2026-11-23T06:23:09+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
 - 2026-11-22T23:23:28+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
 - 2026-11-22T14:16:21+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
-- 2026-11-22T05:39:45+00:00 · Aquarius Academy · full · rotate to full until each arm has 4 posts with a 24h read
